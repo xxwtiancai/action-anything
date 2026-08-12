@@ -4,12 +4,61 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Mapping, Protocol
+from typing import Any, Iterable, Mapping, Protocol
 from urllib.parse import urlparse
 from uuid import uuid4
 
 from .actions import Action, ActionKind
 from .policy import host_is_allowed, is_public_http_url, normalize_allowed_domains
+
+
+_DEFAULT_ALLOWED_REQUEST_METHODS = frozenset({"GET"})
+_SUPPORTED_REQUEST_METHODS = frozenset(
+    {
+        "GET",
+        "HEAD",
+        "OPTIONS",
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE",
+    }
+)
+
+
+def _normalize_allowed_request_methods(methods: Iterable[str]) -> frozenset[str]:
+    """Validate trusted browser request-method configuration.
+
+    Callers must opt in to every additional method their application needs.
+    CONNECT and TRACE are never supported because they create proxy/tunnel or
+    diagnostic capabilities outside this executor's intended browser-use
+    boundary.
+    """
+
+    if isinstance(methods, (str, bytes, Mapping)):
+        raise ValueError("allowed_request_methods must be an iterable of HTTP method names")
+    try:
+        values = iter(methods)
+    except TypeError as exc:
+        raise ValueError("allowed_request_methods must be an iterable of HTTP method names") from exc
+
+    normalized: set[str] = set()
+    for value in values:
+        if (
+            not isinstance(value, str)
+            or not value
+            or not value.isascii()
+            or value != value.strip()
+            or not value.isupper()
+            or not value.isalpha()
+        ):
+            raise ValueError(
+                "allowed request methods must be uppercase ASCII HTTP method names without whitespace"
+            )
+        if value not in _SUPPORTED_REQUEST_METHODS:
+            raise ValueError("allowed request method is unsupported")
+        normalized.add(value)
+    return frozenset(normalized)
 
 
 class Executor(Protocol):
@@ -42,8 +91,12 @@ class PlaywrightExecutor:
 
     Install with ``pip install 'actionanything[browser]'`` followed by
     ``playwright install chromium``. Real execution requires a non-empty
-    hostname allowlist. The browser context blocks requests outside it; this is
-    defense in depth, not a replacement for an isolated browser/VM.
+    hostname allowlist. The browser context also allows only ``GET`` requests
+    by default; applications must explicitly configure every additional HTTP
+    method they need. This limits request methods but does not establish
+    read-only business semantics. These are defense-in-depth
+    controls, not a replacement for an isolated browser/VM or business
+    authorization.
     """
 
     is_dry_run = False
@@ -53,6 +106,7 @@ class PlaywrightExecutor:
         headless: bool = True,
         *,
         allowed_domains: tuple[str, ...] | list[str] | set[str] = (),
+        allowed_request_methods: Iterable[str] = _DEFAULT_ALLOWED_REQUEST_METHODS,
         artifact_dir: str | Path = "actionanything-artifacts",
         timeout_milliseconds: int = 30_000,
     ) -> None:
@@ -63,6 +117,9 @@ class PlaywrightExecutor:
             raise ValueError(
                 "PlaywrightExecutor requires at least one allowed domain for real execution"
             )
+        self._allowed_request_methods = _normalize_allowed_request_methods(
+            allowed_request_methods
+        )
         self.headless = headless
         self.timeout_milliseconds = timeout_milliseconds
         self.artifact_dir = Path(artifact_dir).expanduser().resolve()
@@ -77,14 +134,35 @@ class PlaywrightExecutor:
         host = urlparse(url).hostname
         return host is not None and host_is_allowed(host, self.allowed_domains)
 
+    @property
+    def allowed_request_methods(self) -> frozenset[str]:
+        """Return the immutable trusted HTTP-method boundary for this executor."""
+
+        return self._allowed_request_methods
+
     def _route_request(self, route: Any) -> None:
-        request = route.request
-        url = str(request.url)
-        parsed = urlparse(url)
+        try:
+            request = route.request
+            method = request.method
+        except Exception:
+            route.abort("blockedbyclient")
+            return
+        if not isinstance(method, str) or method not in self.allowed_request_methods:
+            route.abort("blockedbyclient")
+            return
+        try:
+            url = request.url
+            if not isinstance(url, str):
+                raise TypeError("request URL must be a string")
+            parsed = urlparse(url)
+            url_is_allowed = self._url_is_allowed(url)
+        except Exception:
+            route.abort("blockedbyclient")
+            return
         # The primary page begins at about:blank. Everything it fetches after
         # that must be an explicitly allowed HTTP(S) resource; this blocks
         # file:, data:, blob:, custom protocol, and off-domain requests.
-        if parsed.scheme not in {"http", "https"} or not self._url_is_allowed(url):
+        if parsed.scheme not in {"http", "https"} or not url_is_allowed:
             route.abort("blockedbyclient")
             return
         route.continue_()

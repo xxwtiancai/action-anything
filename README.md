@@ -75,6 +75,28 @@ print(result.to_dict())
 - The CLI defaults to dry-run. It can validate and record a plan without a
   browser, while real execution is opt-in and requires at least one
   `--allowed-domain`.
+- The real Playwright executor permits only `GET` network requests by default.
+  Programmatic users must explicitly allow every additional HTTP method; this
+  constrains browser egress but does not prove that a `GET` has no business
+  side effect.
+
+For a reviewed workflow that genuinely needs a write request, configure only
+the methods it needs in application code; the CLI deliberately keeps its
+default `GET`-only boundary:
+
+```python
+from actionanything.executors import PlaywrightExecutor
+
+executor = PlaywrightExecutor(
+    allowed_domains=["example.com"],
+    allowed_request_methods={"GET", "POST"},
+)
+```
+
+The configurable set is `GET`, `HEAD`, `OPTIONS`, `POST`, `PUT`, `PATCH`, and
+`DELETE`; `CONNECT` and `TRACE` are always rejected. A cross-origin request may
+also need an explicit `OPTIONS` grant for its browser preflight. Treat every
+such grant as trusted application configuration, not action-plan data.
 
 ## Architecture and contributing
 

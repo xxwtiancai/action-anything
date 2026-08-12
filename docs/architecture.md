@@ -86,6 +86,17 @@ Implement `Executor.execute(action)` and expose `is_dry_run`. Executors should
 reject unsupported actions, avoid hidden retries, and return JSON-compatible
 metadata rather than provider objects.
 
+The optional `PlaywrightExecutor` also treats its domain and request-method
+configuration as trusted application input. It allows only `GET` requests by
+default; `HEAD`, `OPTIONS`, and write-capable HTTP methods require an explicit
+`allowed_request_methods` grant. This constrains browser egress, but cannot
+prove a server treats any method as business-safe.
+
+The CLI intentionally does not accept a request-method flag, so its real
+executor keeps the `GET`-only default. Applications that need an explicit
+method grant construct `PlaywrightExecutor` themselves and retain ownership of
+that trusted configuration.
+
 ### Add a policy
 
 Implement `Policy.evaluate(action)`. Return `None` when the policy does not
