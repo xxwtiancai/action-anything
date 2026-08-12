@@ -22,6 +22,9 @@ uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions and
   risk floor.
 - Default traces now retain only narrow structural/numeric fields. Use
   `--unsafe-trace` only for local, non-sensitive test data.
+- Trace recording now retries positive short writes and reports zero-progress
+  writes as an audit failure instead of silently accepting a truncated JSONL
+  event.
 
 ### Breaking changes
 
