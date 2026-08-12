@@ -1,6 +1,6 @@
 # Iteration 014: Canonical schema intake and bounded metadata
 
-**Status: local validation and independent review complete; remote CI pending.**
+**Status: local validation, independent review, and remote CI complete.**
 This AHE record tracks one integrated ActionAnything schema-hardening change.
 It does not add a product Agent Harness.
 
@@ -75,6 +75,11 @@ git diff --cached --check
 Results: **95 targeted tests passed** and **119 full offline tests passed**.
 Source compilation, the working-tree format check, and the selective staged
 format check all passed.
+
+The manually dispatched [CI workflow](https://github.com/xxwtiancai/action-anything/actions/runs/31596170261)
+also passed on Python 3.10, 3.11, 3.12, and 3.13, including source compilation,
+the complete test suite, dependency checks, distribution build/metadata checks,
+and wheel-install CLI smoke validation.
 
 The regressions cover a divergent URL scalar observed by `PolicyEngine`,
 integer/float bound bypass attempts, normalized key alias collisions, injected
