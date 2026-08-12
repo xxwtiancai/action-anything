@@ -51,7 +51,9 @@ git diff --check
 Actual result: 21 adapter tests passed, including successful mappings,
 constructor/configuration bounds, caller handling, malformed and
 unsupported input rejection, secret non-reflection in adapter errors, and
-provenance minimization. `git diff --check` passed.
+provenance minimization. The wait cases also accept negligible binary-float
+representation noise around a whole millisecond while rejecting a genuinely
+fractional millisecond. `git diff --check` passed.
 
 ## Residual risk and next question
 

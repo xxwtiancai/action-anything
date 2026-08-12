@@ -210,14 +210,27 @@ class AnthropicComputerUseAdapter:
     def _milliseconds(value: Any) -> int:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise AdapterError("Anthropic wait duration must be a finite number")
-        if isinstance(value, float) and not math.isfinite(value):
+        if isinstance(value, int):
+            if not 0 <= value <= MAX_WAIT_MILLISECONDS // 1_000:
+                raise AdapterError("Anthropic wait duration is outside the supported range")
+            return value * 1_000
+
+        if not math.isfinite(value):
             raise AdapterError("Anthropic wait duration must be a finite number")
         if not 0 <= value <= MAX_WAIT_MILLISECONDS / 1_000:
             raise AdapterError("Anthropic wait duration is outside the supported range")
-        milliseconds = value * 1_000
-        if isinstance(milliseconds, float) and not milliseconds.is_integer():
+        milliseconds_float = value * 1_000
+        if not math.isfinite(milliseconds_float):
+            raise AdapterError("Anthropic wait duration is outside the supported range")
+        milliseconds = round(milliseconds_float)
+        # JSON decoders expose provider durations as binary floats. Permit
+        # negligible representation noise around a whole millisecond, but do
+        # not approximate a provider-supplied fractional millisecond.
+        if abs(milliseconds_float - milliseconds) > 1e-9:
             raise AdapterError("Anthropic wait duration must resolve to whole milliseconds")
-        return int(milliseconds)
+        if not 0 <= milliseconds <= MAX_WAIT_MILLISECONDS:
+            raise AdapterError("Anthropic wait duration is outside the supported range")
+        return milliseconds
 
     @staticmethod
     def _unknown_fields(

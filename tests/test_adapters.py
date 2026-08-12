@@ -209,6 +209,16 @@ class AnthropicComputerUseAdapterTests(unittest.TestCase):
                 ActionKind.WAIT,
                 {"milliseconds": 1_500},
             ),
+            (
+                {"action": "wait", "duration": 0.30000000000000004},
+                ActionKind.WAIT,
+                {"milliseconds": 300},
+            ),
+            (
+                {"action": "wait", "duration": 0.0010000000000000002},
+                ActionKind.WAIT,
+                {"milliseconds": 1},
+            ),
             ({"action": "screenshot"}, ActionKind.SCREENSHOT, {}),
         )
 
@@ -323,6 +333,7 @@ class AnthropicComputerUseAdapterTests(unittest.TestCase):
             {"action": "wait", "duration": True},
             {"action": "wait", "duration": float("nan")},
             {"action": "wait", "duration": 60.001},
+            {"action": "wait", "duration": 60.00000000000001},
             {"action": "wait", "duration": 0.0001},
             {"action": "type"},
             {"action": "type", "text": None},
