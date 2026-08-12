@@ -38,9 +38,10 @@ uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions and
 - `PlaywrightExecutor` now requires a non-empty `allowed_domains` allowlist,
   and default trace JSONL intentionally cannot be replayed; use an explicit,
   local `--unsafe-trace` test trace for replay.
-- Trace replay now fails closed if an event was denied, cancelled, or blocked
-  by an execution budget; it must not turn a prior admission decision into a
-  later execution attempt.
+- Trace replay now fails closed unless every event is a complete unredacted
+  dry-run with explicit allow/confirm evidence; it must not turn a real prior
+  execution, failure, cancellation, denial, or budget block into a later
+  execution attempt.
 - A budgeted `execute_many()` now fails closed if an embedding subclass
   overrides `execute()` or `_execute()`. Unbudgeted batches retain legacy
   dispatch; compose custom policy or executor behavior for a budgeted batch.

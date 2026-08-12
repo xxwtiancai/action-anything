@@ -118,6 +118,12 @@ unbudgeted.
 - Default CLI traces retain only a narrow structural/numeric subset; action IDs,
   strings, metadata, policy text, errors, and artifact paths are redacted.
   `--unsafe-trace` is only for local, non-sensitive test data.
+- Replay is deliberately narrower than trace inspection: it only accepts a
+  non-empty unredacted current trace run (or a consistently marker-free legacy
+  trace) whose events recorded an explicit `allow`/`confirm` decision and a
+  completed `dry_run` result. A trace is not a retry queue, so real `success`
+  events and denied, cancelled, failed, incomplete, or budget-blocked events
+  all fail closed.
 - Navigation can be restricted with repeatable `--allowed-domain` options.
   An allowlist is a defense in depth control, not a complete network sandbox.
 - The CLI defaults to dry-run. It can validate and record a plan without a

@@ -129,42 +129,128 @@ def _inspect(args: argparse.Namespace) -> int:
     return 0
 
 
+def _validate_replay_admission(event: dict[str, Any], action: Action) -> None:
+    """Reject trace events that do not represent a completed safe replay case.
+
+    A trace is evidence, not an execution queue. In particular, replaying a
+    failed, denied, or cancelled event would turn a past decision or uncertain
+    partial side effect into an implicit retry. Replay is deliberately limited
+    to completed dry-run evidence with an explicit allow/confirm decision; a
+    real executor success is not evidence that a repeated side effect is safe.
+    """
+
+    policy = event.get("policy")
+    result = event.get("result")
+    if not isinstance(policy, dict) or not isinstance(result, dict):
+        raise ValueError("trace contains an invalid policy or result")
+    if contains_redaction(policy) or contains_redaction(result):
+        raise ValueError(
+            "trace contains redacted values and cannot be replayed safely; "
+            "record a local test trace with --unsafe-trace"
+        )
+    if policy.get("name") == "ExecutionBudget":
+        raise ValueError(
+            "trace contains actions not admitted for execution and cannot be replayed safely"
+        )
+    decision = policy.get("decision")
+    if not isinstance(decision, str) or decision not in {"allow", "confirm"}:
+        raise ValueError(
+            "trace contains an action without an executable policy decision and cannot be replayed safely"
+        )
+    if (
+        not isinstance(policy.get("name"), str)
+        or not policy["name"].strip()
+        or not isinstance(policy.get("reason"), str)
+        or not policy["reason"].strip()
+    ):
+        raise ValueError("trace contains incomplete policy evidence")
+    required_result_fields = {"action_id", "status", "output", "error", "audit_error"}
+    if not required_result_fields.issubset(result):
+        raise ValueError("trace contains incomplete result evidence")
+    status = result.get("status")
+    if not isinstance(status, str) or status != ResultStatus.DRY_RUN.value:
+        raise ValueError(
+            "trace contains an action without a completed dry-run result and cannot be replayed safely"
+        )
+    if result.get("action_id") != action.id or not isinstance(result.get("output"), dict):
+        raise ValueError("trace contains incomplete result evidence")
+    if result.get("error") is not None or result.get("audit_error") is not None:
+        raise ValueError("trace contains an action with execution or audit errors")
+
+
+def _validate_replay_run_identity(
+    event: dict[str, Any],
+    *,
+    trace_id: str | None,
+    expects_identity: bool | None,
+    previous_sequence: int | None,
+) -> tuple[str | None, bool, int | None]:
+    """Require one current trace run or one consistently legacy trace profile.
+
+    Recorder recovery can leave intentional sequence gaps after an unrecorded
+    failed attempt, so sequences need only be positive and strictly increasing.
+    Trace ID and sequence are paired current-format fields; a legacy replay
+    input may omit both consistently, but a mixed profile is not trustworthy.
+    """
+
+    has_trace_id = "trace_id" in event
+    has_sequence = "sequence" in event
+    if has_trace_id != has_sequence:
+        raise ValueError("trace mixes current and legacy run identity fields")
+    if expects_identity is None:
+        expects_identity = has_trace_id
+    elif expects_identity != has_trace_id:
+        raise ValueError("trace mixes current and legacy run identity fields")
+    if not has_trace_id:
+        return trace_id, expects_identity, previous_sequence
+
+    event_trace_id = event["trace_id"]
+    sequence = event["sequence"]
+    if (
+        not isinstance(event_trace_id, str)
+        or not event_trace_id
+        or contains_redaction(event_trace_id)
+        or isinstance(sequence, bool)
+        or not isinstance(sequence, int)
+        or sequence < 1
+    ):
+        raise ValueError("trace contains an invalid run identity")
+    if trace_id is not None and event_trace_id != trace_id:
+        raise ValueError("trace contains multiple runs and cannot be replayed as one plan")
+    if previous_sequence is not None and sequence <= previous_sequence:
+        raise ValueError("trace sequence is not strictly increasing")
+    return event_trace_id, expects_identity, sequence
+
+
 def _replay(args: argparse.Namespace) -> int:
     budget = _execution_budget(args)
     actions: list[Action] = []
     trace_id: str | None = None
+    expects_identity: bool | None = None
+    previous_sequence: int | None = None
+    event_count = 0
     for event in read_trace(args.trace):
+        event_count += 1
         payload = event["action"]
-        policy = event.get("policy")
-        result = event.get("result")
-        if not isinstance(policy, dict) or not isinstance(result, dict):
-            raise ValueError("trace contains an invalid policy or result")
-        if policy.get("name") == "ExecutionBudget" or result.get("status") in {
-            ResultStatus.DENIED.value,
-            ResultStatus.CANCELLED.value,
-        }:
-            raise ValueError(
-                "trace contains actions not admitted for execution and cannot be replayed safely"
-            )
         if contains_redaction(payload):
             raise ValueError(
                 "trace contains redacted values and cannot be replayed safely; "
                 "record a local test trace with --unsafe-trace"
             )
-        event_trace_id = event.get("trace_id")
-        if event_trace_id is not None:
-            if not isinstance(event_trace_id, str) or not event_trace_id:
-                raise ValueError("trace contains an invalid trace_id")
-            if trace_id is None:
-                trace_id = event_trace_id
-            elif event_trace_id != trace_id:
-                raise ValueError(
-                    "trace contains multiple runs and cannot be replayed as one plan"
-                )
         try:
-            actions.append(Action.from_dict(payload))
+            action = Action.from_dict(payload)
         except (ActionValidationError, TypeError) as exc:
             raise ValueError(f"trace contains an invalid action: {exc}") from exc
+        _validate_replay_admission(event, action)
+        trace_id, expects_identity, previous_sequence = _validate_replay_run_identity(
+            event,
+            trace_id=trace_id,
+            expects_identity=expects_identity,
+            previous_sequence=previous_sequence,
+        )
+        actions.append(action)
+    if not event_count:
+        raise ValueError("trace contains no replayable events")
     runtime = _build_runtime(args, replay=True)
     try:
         return _print_results(runtime.execute_many(actions, budget=budget))
