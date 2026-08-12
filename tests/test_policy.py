@@ -1,18 +1,55 @@
 import unittest
 
 from actionanything import Action, ActionKind, Decision, PolicyEngine, RiskLevel
-from actionanything.policy import DomainAllowlistPolicy, RiskPolicy
+from actionanything.policy import (
+    DomainAllowlistPolicy,
+    PolicyOutcome,
+    RiskPolicy,
+    is_public_http_url,
+)
+
+
+class BrokenPolicy:
+    def evaluate(self, action):
+        raise RuntimeError("broken")
+
+
+class InvalidPolicy:
+    def evaluate(self, action):
+        return "allow"
 
 
 class PolicyTests(unittest.TestCase):
-    def test_standard_policy_allows_low_risk_action(self) -> None:
-        outcome = PolicyEngine.standard().evaluate(Action(ActionKind.CLICK))
-        self.assertIs(outcome.decision, Decision.ALLOW)
+    def test_standard_policy_confirms_untrusted_click_and_type_actions(self) -> None:
+        for action in (
+            Action(ActionKind.CLICK, {"selector": "#safe"}),
+            Action(ActionKind.TYPE, {"text": "untrusted input"}),
+        ):
+            with self.subTest(kind=action.kind):
+                outcome = PolicyEngine.standard().evaluate(action)
+                self.assertIs(outcome.decision, Decision.CONFIRM)
+
+    def test_standard_policy_allows_non_effecting_actions(self) -> None:
+        for action in (
+            Action(ActionKind.SCROLL, {"delta_y": 100}),
+            Action(ActionKind.WAIT, {"milliseconds": 1}),
+        ):
+            with self.subTest(kind=action.kind):
+                outcome = PolicyEngine.standard().evaluate(action)
+                self.assertIs(outcome.decision, Decision.ALLOW)
 
     def test_external_action_requires_confirmation(self) -> None:
-        action = Action(ActionKind.CLICK, risk=RiskLevel.EXTERNAL)
+        action = Action(
+            ActionKind.CLICK,
+            {"selector": "#submit"},
+            risk=RiskLevel.EXTERNAL,
+        )
         outcome = PolicyEngine.standard().evaluate(action)
         self.assertIs(outcome.decision, Decision.CONFIRM)
+
+    def test_navigation_requires_explicit_allowlist(self) -> None:
+        action = Action(ActionKind.NAVIGATE, {"url": "https://example.com"})
+        self.assertIs(PolicyEngine.standard().evaluate(action).decision, Decision.DENY)
 
     def test_allowlist_accepts_domain_and_subdomain(self) -> None:
         engine = PolicyEngine.standard(["example.com"])
@@ -26,10 +63,56 @@ class PolicyTests(unittest.TestCase):
         action = Action(ActionKind.NAVIGATE, {"url": "https://example.org"})
         self.assertIs(engine.evaluate(action).decision, Decision.DENY)
 
-    def test_allowlist_denies_non_http_url(self) -> None:
-        policy = DomainAllowlistPolicy(["example.com"])
-        action = Action(ActionKind.NAVIGATE, {"url": "file:///etc/passwd"})
-        self.assertIs(policy.evaluate(action).decision, Decision.DENY)
+    def test_default_navigation_policy_denies_private_targets(self) -> None:
+        for url in (
+            "http://localhost:3000",
+            "http://127.0.0.1",
+            "http://10.0.0.1",
+            "http://[::1]",
+            "http://169.254.169.254/latest/meta-data",
+        ):
+            with self.subTest(url=url):
+                action = Action(ActionKind.NAVIGATE, {"url": url})
+                self.assertIs(PolicyEngine.standard(["example.com"]).evaluate(action).decision, Decision.DENY)
+                self.assertFalse(is_public_http_url(url))
+
+    def test_navigation_rejects_legacy_numeric_ipv4_forms(self) -> None:
+        # These are browser-recognized IPv4 spellings that ipaddress does not
+        # parse as canonical literals. Several resolve to 127.0.0.1.
+        for url in (
+            "http://2130706433/",
+            "http://0x7f000001/",
+            "http://0177.0.0.1/",
+            "http://127.1/",
+            "http://0x7f.1/",
+            "http://.127.0.0.1/",
+            "http://127..1/",
+        ):
+            with self.subTest(url=url):
+                self.assertFalse(is_public_http_url(url))
+
+    def test_navigation_keeps_public_and_hex_looking_domain_names_distinct(self) -> None:
+        self.assertTrue(is_public_http_url("https://8.8.8.8/"))
+        engine = PolicyEngine.standard(["bad.cafe", "dead.beef"])
+        for url in ("https://bad.cafe/", "https://api.dead.beef/path"):
+            with self.subTest(url=url):
+                self.assertIs(
+                    engine.evaluate(Action(ActionKind.NAVIGATE, {"url": url})).decision,
+                    Decision.ALLOW,
+                )
+
+    def test_navigation_normalizes_unicode_localhost_before_policy(self) -> None:
+        self.assertFalse(is_public_http_url("http://ⓛocalhost/"))
+
+    def test_navigation_rejects_malformed_ports_fail_closed(self) -> None:
+        for url in (
+            "https://example.com:not-a-port/",
+            "https://example.com:0/",
+            "https://example.com:65536/",
+            "https://[::1",
+        ):
+            with self.subTest(url=url):
+                self.assertFalse(is_public_http_url(url))
 
     def test_sensitive_target_requires_confirmation(self) -> None:
         engine = PolicyEngine.standard()
@@ -50,7 +133,17 @@ class PolicyTests(unittest.TestCase):
         )
         self.assertIs(engine.evaluate(action).decision, Decision.DENY)
 
+    def test_policy_failures_fail_closed(self) -> None:
+        action = Action(ActionKind.CLICK, {"selector": "#safe"})
+        for policy in (BrokenPolicy(), InvalidPolicy()):
+            with self.subTest(policy=type(policy).__name__):
+                outcome = PolicyEngine([policy]).evaluate(action)
+                self.assertIs(outcome.decision, Decision.DENY)
+
+    def test_policy_outcome_normalizes_decision(self) -> None:
+        outcome = PolicyOutcome("deny", "reason", "test")
+        self.assertIs(outcome.decision, Decision.DENY)
+
 
 if __name__ == "__main__":
     unittest.main()
-

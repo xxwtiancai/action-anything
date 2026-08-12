@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation and support
+    url: https://github.com/xxwtiancai/action-anything/blob/main/SUPPORT.md
+    about: Read the support guide before filing a bug or feature request.
+  - name: Security vulnerability reporting
+    url: https://github.com/xxwtiancai/action-anything/security/advisories/new
+    about: Report vulnerabilities privately. Do not disclose them in a public issue.
+  - name: Community conduct
+    url: https://github.com/xxwtiancai/action-anything/blob/main/CODE_OF_CONDUCT.md
+    about: Read the community expectations and reporting guidance.
