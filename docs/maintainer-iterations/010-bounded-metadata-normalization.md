@@ -1,6 +1,6 @@
 # Iteration 010: Bounded metadata normalization
 
-**Status: local validation and independent review complete; remote CI pending.**
+**Status: validated locally, independently reviewed, and remote CI passed.**
 This is an Agentic Harness Engineering (AHE) maintenance record. It records a
 small, falsifiable ActionAnything input-boundary improvement; it does not add
 an Agent Harness to the product.
@@ -62,6 +62,9 @@ coverage for a dictionary-to-list-to-dictionary cycle and for shared children
 that are not cycles; both are now covered. The review also identified the JSON
 decoder as a preceding recursion boundary, so `_load_actions` normalizes its
 `RecursionError` into the CLI's stable `ValueError` path.
+
+Remote CI passed on Python 3.10, 3.11, 3.12, and 3.13, plus distribution build,
+CodeQL, and dependency review.
 
 ## Residual risks
 
