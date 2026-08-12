@@ -14,6 +14,9 @@ uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions and
   unsupported calls and pending provider safety checks.
 - Browser containment, trace-redaction, CodeQL/dependency-review, release, and
   community-health foundations, plus AHE iteration records for maintainers.
+- Self-contained, versioned Draft 2020-12 schemas for action and action-plan
+  inputs, available through `action_schema()`, `action_plan_schema()`, and
+  `aa schema action|plan`.
 
 ### Changed
 
