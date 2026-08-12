@@ -11,7 +11,7 @@ from .actions import (
 from .executors import DryRunExecutor, ExecutorSafetyError, PlaywrightExecutor
 from .policy import Decision, PolicyEngine, PolicyOutcome
 from .recorder import TraceRecorder, read_trace
-from .runtime import ActionRuntime
+from .runtime import ActionRuntime, ExecutionBudget
 
 __all__ = [
     "Action",
@@ -21,6 +21,7 @@ __all__ = [
     "ActionRuntime",
     "Decision",
     "DryRunExecutor",
+    "ExecutionBudget",
     "ExecutorSafetyError",
     "PlaywrightExecutor",
     "PolicyEngine",

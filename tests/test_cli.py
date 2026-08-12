@@ -5,7 +5,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 
-from actionanything import Action, ActionKind, Decision, DryRunExecutor, TraceRecorder
+from actionanything import Action, ActionKind, Decision, DryRunExecutor, TraceRecorder, read_trace
 from actionanything.cli import main
 from actionanything.policy import PolicyOutcome
 
@@ -68,6 +68,59 @@ class CliTests(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertIn("invalid action at index 0", errors)
 
+    def test_plan_rejects_unsupported_top_level_budget_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            plan = Path(directory) / "invalid-plan.json"
+            plan.write_text(
+                json.dumps(
+                    {
+                        "actions": [{"kind": "wait", "params": {"milliseconds": 1}}],
+                        "budget": {"max_actions": 999},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            code, _, errors = self._main(["validate", str(plan)])
+
+        self.assertEqual(code, 2)
+        self.assertIn("action plans must not set budget", errors)
+
+    def test_run_rejects_plan_budget_but_preserves_other_envelope_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            invalid_plan = root / "invalid-plan.json"
+            compatible_plan = root / "compatible-plan.json"
+            compatible_trace = root / "compatible-trace.jsonl"
+            invalid_plan.write_text(
+                json.dumps(
+                    {
+                        "actions": [{"kind": "wait", "params": {"milliseconds": 1}}],
+                        "budget": {"max_actions": 999},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            compatible_plan.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "metadata": {"producer": "portable-plan"},
+                        "actions": [{"kind": "wait", "params": {"milliseconds": 1}}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            invalid_code, _, invalid_errors = self._main(["run", str(invalid_plan)])
+            compatible_code, compatible_output, _ = self._main(
+                ["run", str(compatible_plan), "--trace", str(compatible_trace)]
+            )
+
+        self.assertEqual(invalid_code, 2)
+        self.assertIn("action plans must not set budget", invalid_errors)
+        self.assertEqual(compatible_code, 0)
+        self.assertIn('"status": "dry_run"', compatible_output)
+
     def test_real_execution_requires_domain_allowlist(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             plan = Path(directory) / "plan.json"
@@ -78,6 +131,139 @@ class CliTests(unittest.TestCase):
             code, _, errors = self._main(["run", str(plan), "--execute"])
             self.assertEqual(code, 2)
             self.assertIn("--execute requires at least one --allowed-domain", errors)
+
+    def test_run_enforces_action_and_wait_budgets_before_more_dry_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plan = root / "plan.json"
+            action_trace = root / "action-limit.jsonl"
+            wait_trace = root / "wait-limit.jsonl"
+            plan.write_text(
+                json.dumps(
+                    {
+                        "actions": [
+                            {"kind": "wait", "params": {"milliseconds": 1}},
+                            {"kind": "wait", "params": {"milliseconds": 1}},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            action_code, action_output, _ = self._main(
+                [
+                    "run",
+                    str(plan),
+                    "--trace",
+                    str(action_trace),
+                    "--max-actions",
+                    "1",
+                ]
+            )
+            wait_code, wait_output, _ = self._main(
+                [
+                    "run",
+                    str(plan),
+                    "--trace",
+                    str(wait_trace),
+                    "--max-total-wait-ms",
+                    "1",
+                ]
+            )
+
+            action_events = list(read_trace(action_trace))
+            wait_events = list(read_trace(wait_trace))
+
+        self.assertEqual(action_code, 1)
+        self.assertEqual(wait_code, 1)
+        self.assertEqual(action_output.count('"status": "dry_run"'), 1)
+        self.assertEqual(wait_output.count('"status": "dry_run"'), 1)
+        self.assertEqual(action_output.count('"status": "denied"'), 1)
+        self.assertEqual(wait_output.count('"status": "denied"'), 1)
+        self.assertEqual(
+            [event["result"]["status"] for event in action_events],
+            ["dry_run", "denied"],
+        )
+        self.assertEqual(
+            [event["result"]["status"] for event in wait_events],
+            ["dry_run", "denied"],
+        )
+
+    def test_run_rejects_invalid_budget_without_creating_a_trace(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plan = root / "plan.json"
+            trace = root / "trace.jsonl"
+            plan.write_text(
+                json.dumps({"actions": [{"kind": "wait", "params": {"milliseconds": 1}}]}),
+                encoding="utf-8",
+            )
+
+            code, _, errors = self._main(
+                [
+                    "run",
+                    str(plan),
+                    "--trace",
+                    str(trace),
+                    "--max-actions",
+                    "-1",
+                ]
+            )
+            trace_created = trace.exists()
+
+        self.assertEqual(code, 2)
+        self.assertIn("max_actions must be a non-negative integer", errors)
+        self.assertFalse(trace_created)
+
+    def test_run_rejects_negative_wait_budget_and_accepts_the_long_flag_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plan = root / "plan.json"
+            invalid_trace = root / "invalid-trace.jsonl"
+            alias_trace = root / "alias-trace.jsonl"
+            plan.write_text(
+                json.dumps(
+                    {
+                        "actions": [
+                            {"kind": "wait", "params": {"milliseconds": 1}},
+                            {"kind": "wait", "params": {"milliseconds": 1}},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            invalid_code, _, invalid_errors = self._main(
+                [
+                    "run",
+                    str(plan),
+                    "--trace",
+                    str(invalid_trace),
+                    "--max-total-wait-ms",
+                    "-1",
+                ]
+            )
+            alias_code, alias_output, _ = self._main(
+                [
+                    "run",
+                    str(plan),
+                    "--trace",
+                    str(alias_trace),
+                    "--max-total-wait-milliseconds",
+                    "1",
+                ]
+            )
+            trace_created = invalid_trace.exists()
+
+        self.assertEqual(invalid_code, 2)
+        self.assertIn(
+            "max_total_wait_milliseconds must be a non-negative integer",
+            invalid_errors,
+        )
+        self.assertFalse(trace_created)
+        self.assertEqual(alias_code, 1)
+        self.assertEqual(alias_output.count('"status": "dry_run"'), 1)
+        self.assertEqual(alias_output.count('"status": "denied"'), 1)
 
     def test_replay_rejects_nested_redaction(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -117,6 +303,32 @@ class CliTests(unittest.TestCase):
             code, _, errors = self._main(["replay", str(trace)])
             self.assertEqual(code, 2)
             self.assertIn("multiple runs", errors)
+
+    def test_replay_rejects_actions_previously_not_admitted_by_a_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plan = root / "plan.json"
+            trace = root / "unsafe-trace.jsonl"
+            plan.write_text(
+                json.dumps({"actions": [{"kind": "wait", "params": {"milliseconds": 1}}]}),
+                encoding="utf-8",
+            )
+            run_code, _, _ = self._main(
+                [
+                    "run",
+                    str(plan),
+                    "--trace",
+                    str(trace),
+                    "--unsafe-trace",
+                    "--max-actions",
+                    "0",
+                ]
+            )
+            replay_code, _, errors = self._main(["replay", str(trace)])
+
+        self.assertEqual(run_code, 1)
+        self.assertEqual(replay_code, 2)
+        self.assertIn("not admitted", errors)
 
 
 if __name__ == "__main__":

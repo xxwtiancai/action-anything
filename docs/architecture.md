@@ -50,6 +50,35 @@ This makes plans inspectable before they touch a browser. Dry-run does not
 bypass policy: navigation still needs an explicit allowlist, and the real
 Playwright executor additionally requires one before it can start.
 
+### Bounded batches
+
+`ExecutionBudget` is trusted application configuration for one
+`ActionRuntime.execute_many()` invocation. It bounds the number of items that
+can enter policy evaluation and, separately, the cumulative requested
+milliseconds of permitted `wait` actions. The action count is checked before
+policy evaluation so a caller cannot bypass it with an unbounded iterable and
+`stop_on_error=False`; wait time is reserved only after policy and confirmation
+allow an action to reach an executor. A budget denial is recorded as a normal
+deny outcome and stops the batch.
+
+The budget is deliberately not part of a JSON action plan, provider adapter,
+or trace replay payload: model- or provider-controlled data must not expand a
+trusted execution envelope. It is local to one call, not a distributed quota,
+rate limiter, idempotency layer, transaction, or network resource controller.
+It bounds calls to `Executor.execute`, not retries or side effects an
+application-provided executor performs inside one call. It also does not bound
+JSON parsing or memory: the CLI materializes a plan before it calls the runtime.
+For auditable feedback, a capped API iterable can be read one candidate past
+the admission limit; that candidate is denied without policy evaluation,
+confirmation, or execution. Applications should bound side-effecting producers
+upstream.
+
+For compatibility, an unbudgeted batch retains dispatch through an embedding
+subclass's execution hooks. A budgeted batch rejects legacy `execute()` or
+`_execute()` overrides before consuming its iterable: budget reservation cannot
+safely bypass an application-owned approval or audit hook. Prefer composition
+through policy and executor implementations when a batch needs a budget.
+
 ### Local evidence, not a security boundary
 
 Every evaluated action can be written to JSONL. Default events retain only a
@@ -98,5 +127,7 @@ confirmation precedence over allow.
 - JSON Schema export for actions and policy outcomes.
 - Screenshot evidence associated with each trace step.
 - Sandboxed remote executors and explicit resource limits.
+- Explicit session-level budgets and resource accounting for deployments that
+  need a scope beyond one action batch.
 - BrowserGym/WebArena-compatible evaluation runners.
 - Signed policy bundles for shared deployments.

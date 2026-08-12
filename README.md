@@ -14,6 +14,7 @@ profiles, and deployment isolation.
 - A model-agnostic schema for navigation, click, type, scroll, wait, and screenshot actions.
 - Provider adapters that normalize supported provider output without making model calls.
 - A composable policy engine with risk gates, domain allowlists, and sensitive-target checks.
+- Trusted per-batch execution budgets for action count and cumulative wait time.
 - Human confirmation for actions that the configured policy gates.
 - A zero-dependency dry-run executor and an optional Playwright browser executor.
 - Redacted JSONL traces plus trace inspection and replay for local test data.
@@ -61,6 +62,53 @@ result = runtime.execute(
 print(result.to_dict())
 ```
 
+## Bound a plan
+
+Plans remain portable data, not policy. Put a trusted budget in the application
+or CLI invocation rather than accepting it from model-generated JSON:
+
+```python
+from actionanything import ExecutionBudget
+
+results = runtime.execute_many(
+    [
+        Action(ActionKind.WAIT, {"milliseconds": 500}),
+        Action(ActionKind.WAIT, {"milliseconds": 500}),
+    ],
+    budget=ExecutionBudget(
+        max_actions=10,
+        max_total_wait_milliseconds=30_000,
+    ),
+)
+```
+
+The CLI exposes the same trusted limits. A budget denial is recorded like any
+other denial and stops the batch before later plan items are evaluated:
+
+```bash
+aa run examples/demo.json \
+  --allowed-domain example.com \
+  --max-actions 10 \
+  --max-total-wait-ms 30000
+```
+
+Budgets are local to one `execute_many()` or CLI invocation. They bound batch
+items reaching policy evaluation and cumulative *requested* `wait` milliseconds
+before calls to `Executor.execute`; a custom executor may still retry or do
+work internally. Budgets do not add cross-process quotas, network bandwidth
+controls, retries, idempotency, transaction rollback, or an input-size/memory
+limit: the CLI parses its complete JSON plan before the runtime applies a
+budget. To leave trace evidence, an API batch at its action cap may read one
+additional candidate, but that candidate never reaches policy, confirmation, or
+an executor. Bound or materialize side-effecting generators upstream.
+
+For compatibility, an unbudgeted batch still dispatches through an embedding
+subclass's execution hooks. A budgeted batch fails closed before consuming input
+when legacy `execute()` or `_execute()` hooks are overridden, because silently
+bypassing an application's approval or audit logic would be unsafe. Use
+policy/executor composition for budgeted batches, or keep the legacy override
+unbudgeted.
+
 ## Safety defaults
 
 - Actions run through deterministic policies before reaching an executor.
@@ -75,6 +123,8 @@ print(result.to_dict())
 - The CLI defaults to dry-run. It can validate and record a plan without a
   browser, while real execution is opt-in and requires at least one
   `--allowed-domain`.
+- Plans cannot set their own execution limits. Configure action-count and
+  cumulative-wait budgets in trusted application code or CLI arguments.
 
 ## Architecture and contributing
 

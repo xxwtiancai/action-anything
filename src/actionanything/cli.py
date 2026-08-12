@@ -12,13 +12,20 @@ from .actions import Action, ActionValidationError, ResultStatus
 from .executors import DryRunExecutor, PlaywrightExecutor
 from .policy import PolicyEngine, PolicyOutcome
 from .recorder import TraceRecorder, contains_redaction, read_trace
-from .runtime import ActionRuntime
+from .runtime import ActionRuntime, ExecutionBudget
 
 
 def _load_actions(path: str | Path) -> list[Action]:
     with Path(path).open(encoding="utf-8") as stream:
         payload = json.load(stream)
-    items = payload.get("actions") if isinstance(payload, dict) else payload
+    if isinstance(payload, dict):
+        if "budget" in payload:
+            raise ValueError(
+                "action plans must not set budget; configure trusted runtime or CLI limits"
+            )
+        items = payload.get("actions")
+    else:
+        items = payload
     if not isinstance(items, list):
         raise ValueError("action plan must be a JSON list or an object with 'actions'")
     actions: list[Action] = []
@@ -72,10 +79,26 @@ def _print_results(results: Iterable[Any]) -> int:
     return exit_code
 
 
+def _execution_budget(args: argparse.Namespace) -> ExecutionBudget | None:
+    """Build trusted CLI execution limits without accepting plan-provided ones."""
+
+    max_actions = args.max_actions
+    max_total_wait_milliseconds = args.max_total_wait_milliseconds
+    if max_actions is None and max_total_wait_milliseconds is None:
+        return None
+    return ExecutionBudget(
+        max_actions=max_actions,
+        max_total_wait_milliseconds=max_total_wait_milliseconds,
+    )
+
+
 def _run(args: argparse.Namespace) -> int:
+    budget = _execution_budget(args)
     runtime = _build_runtime(args)
     try:
-        return _print_results(runtime.execute_many(_load_actions(args.plan)))
+        return _print_results(
+            runtime.execute_many(_load_actions(args.plan), budget=budget)
+        )
     finally:
         close = getattr(runtime.executor, "close", None)
         if close is not None:
@@ -107,10 +130,22 @@ def _inspect(args: argparse.Namespace) -> int:
 
 
 def _replay(args: argparse.Namespace) -> int:
+    budget = _execution_budget(args)
     actions: list[Action] = []
     trace_id: str | None = None
     for event in read_trace(args.trace):
         payload = event["action"]
+        policy = event.get("policy")
+        result = event.get("result")
+        if not isinstance(policy, dict) or not isinstance(result, dict):
+            raise ValueError("trace contains an invalid policy or result")
+        if policy.get("name") == "ExecutionBudget" or result.get("status") in {
+            ResultStatus.DENIED.value,
+            ResultStatus.CANCELLED.value,
+        }:
+            raise ValueError(
+                "trace contains actions not admitted for execution and cannot be replayed safely"
+            )
         if contains_redaction(payload):
             raise ValueError(
                 "trace contains redacted values and cannot be replayed safely; "
@@ -132,7 +167,7 @@ def _replay(args: argparse.Namespace) -> int:
             raise ValueError(f"trace contains an invalid action: {exc}") from exc
     runtime = _build_runtime(args, replay=True)
     try:
-        return _print_results(runtime.execute_many(actions))
+        return _print_results(runtime.execute_many(actions, budget=budget))
     finally:
         close = getattr(runtime.executor, "close", None)
         if close is not None:
@@ -167,6 +202,18 @@ def build_parser() -> argparse.ArgumentParser:
             "--yes",
             action="store_true",
             help="automatically confirm policy-gated actions",
+        )
+        command.add_argument(
+            "--max-actions",
+            type=int,
+            help="evaluate at most this many actions from the batch",
+        )
+        command.add_argument(
+            "--max-total-wait-ms",
+            "--max-total-wait-milliseconds",
+            dest="max_total_wait_milliseconds",
+            type=int,
+            help="allow at most this many cumulative wait milliseconds at the executor",
         )
 
     run = subparsers.add_parser("run", help="run a JSON action plan")

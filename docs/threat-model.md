@@ -71,7 +71,7 @@ application's behalf.
 | Sensitive data leaks into a trace, issue, log, or screenshot. | Default trace recording intentionally keeps only action kind/risk, action numeric parameters, policy decision, status, bounded numeric results, timestamp, and sequence; it redacts arbitrary strings, identifiers, metadata, policy text, errors and artifact names. It is not a secret-management system and must not be relied on to sanitize arbitrary browser artifacts or external logs. Do not put secrets in plans or share traces/artifacts without review. |
 | A screenshot or artifact write reaches an unintended local path. | The current Playwright screenshot path is constrained under its artifact directory and reserves a fresh output. This does not make every executor or caller-supplied filesystem path safe. Avoid untrusted paths and use a restricted working directory. |
 | A browser action affects a real account or external service. | Use least-privilege, disposable credentials; maintain human confirmation for consequential actions; and run in a dedicated browser profile or sandbox. The project does not infer every destructive action from page semantics. |
-| A long or repeated plan exhausts resources or causes repeated side effects. | `execute_many` stops after an error, denial, or cancellation. It does not provide quotas, rate limits, transaction rollback, or idempotency guarantees. Applications must impose their own budgets and recovery controls. |
+| A long or repeated plan exhausts resources or causes repeated side effects. | Applications can set a trusted per-batch `ExecutionBudget` for action-count and cumulative requested `wait` time; the CLI exposes matching flags. It does not provide cross-call quotas, rate limits, transaction rollback, idempotency, browser CPU/memory, network bandwidth, or internal-executor retry guarantees. Applications must impose those broader controls and recovery practices. |
 | A dependency or release is compromised. | The core package minimizes runtime dependencies; the optional browser executor depends on Playwright and a browser runtime. Pin and review deployment dependencies, verify release provenance where available, and avoid running unreviewed code with production credentials. |
 
 ## Non-goals
@@ -102,7 +102,7 @@ Before enabling a real executor:
 4. Require a human to approve external, irreversible, or ambiguous actions.
 5. Keep plans, traces, screenshots, and logs out of public issue trackers and
    restrict local access to them.
-6. Set application-level action budgets, timeouts, and monitoring.
+6. Set a trusted `ExecutionBudget`, executor timeouts, and application-level monitoring; apply additional session, rate, network, and account limits outside this package.
 7. Treat `--unsafe-trace` as unsuitable for personal, confidential, or
    production data.
 
