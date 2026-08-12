@@ -5,10 +5,62 @@ from pathlib import Path
 
 from actionanything import Action, ActionKind, ActionResult, Decision, ResultStatus, TraceRecorder, read_trace
 from actionanything.policy import PolicyOutcome
-from actionanything.recorder import REDACTED, redact_value
+from actionanything.recorder import REDACTED, TraceRecorder, contains_redaction, redact_value
 
 
 class TraceRedactionTests(unittest.TestCase):
+    def test_contains_redaction_handles_deep_trace_values_without_recursion(self) -> None:
+        value: dict[str, object] = {}
+        cursor = value
+        for _ in range(1_000):
+            child: dict[str, object] = {}
+            cursor["child"] = child
+            cursor = child
+        cursor["value"] = REDACTED
+
+        self.assertTrue(contains_redaction(value))
+
+        cyclic: dict[str, object] = {}
+        cyclic["self"] = cyclic
+        self.assertFalse(contains_redaction(cyclic))
+        cyclic["value"] = REDACTED
+        self.assertTrue(contains_redaction(cyclic))
+
+    def test_read_trace_rejects_deep_or_invalid_event_shapes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            deeply_nested = root / "deep.jsonl"
+            deeply_nested.write_text(
+                '{"action":' + '{"child":' * 2_000 + "null" + "}" * 2_000 + "}\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "nested too deeply"):
+                list(read_trace(deeply_nested))
+
+            invalid_result = root / "invalid-result.jsonl"
+            invalid_result.write_text(
+                '{"action": {}, "result": []}\n', encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ValueError, "invalid result"):
+                list(read_trace(invalid_result))
+
+    def test_unsafe_trace_writer_rejects_events_its_reader_would_reject(self) -> None:
+        metadata: dict[str, object] = {}
+        cursor = metadata
+        for _ in range(200):
+            child: dict[str, object] = {}
+            cursor["child"] = child
+            cursor = child
+        action = Action(ActionKind.WAIT, {"milliseconds": 1}, metadata=metadata)
+        outcome = PolicyOutcome(Decision.ALLOW, "test", "test")
+        result = ActionResult(action.id, ResultStatus.DRY_RUN)
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trace.jsonl"
+            with self.assertRaisesRegex(ValueError, "nested too deeply"):
+                TraceRecorder(path, redact=False).record(action, outcome, result)
+            self.assertFalse(path.exists())
+
     def test_redact_value_handles_nested_url_suffixes_and_sensitive_keys(self) -> None:
         secret = "nested-secret"
         redacted = redact_value(
