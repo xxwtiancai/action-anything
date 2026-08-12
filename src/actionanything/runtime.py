@@ -29,14 +29,25 @@ class ActionRuntime:
         self.confirm = confirm
 
     def execute(self, action: Action) -> ActionResult:
-        outcome = self.policy.evaluate(action)
+        try:
+            outcome = self.policy.evaluate(action)
+        except Exception:
+            outcome = PolicyOutcome(
+                Decision.DENY,
+                "policy engine failed; action denied",
+                "ActionRuntime",
+            )
 
         if outcome.decision is Decision.DENY:
             result = ActionResult(action.id, ResultStatus.DENIED, error=outcome.reason)
             return self._record(action, outcome, result)
 
         if outcome.decision is Decision.CONFIRM:
-            if self.confirm is None or not self.confirm(action, outcome):
+            try:
+                approved = self.confirm is not None and self.confirm(action, outcome)
+            except Exception:
+                approved = False
+            if not approved:
                 result = ActionResult(
                     action.id,
                     ResultStatus.CANCELLED,
@@ -52,8 +63,11 @@ class ActionRuntime:
                 else ResultStatus.SUCCESS
             )
             result = ActionResult(action.id, status, output=output)
-        except Exception as exc:  # Executors normalize failures at this boundary.
-            result = ActionResult(action.id, ResultStatus.ERROR, error=str(exc))
+        except Exception:  # Executors normalize failures at this boundary.
+            # Executor exceptions can contain URLs, page content, credentials,
+            # or implementation-specific details.  Keep the public runtime and
+            # CLI boundary stable without reflecting untrusted error text.
+            result = ActionResult(action.id, ResultStatus.ERROR, error="executor failed")
         return self._record(action, outcome, result)
 
     def execute_many(
@@ -80,6 +94,17 @@ class ActionRuntime:
         result: ActionResult,
     ) -> ActionResult:
         if self.recorder is not None:
-            self.recorder.record(action, outcome, result)
+            try:
+                self.recorder.record(action, outcome, result)
+            except Exception:
+                # The action may already have executed. Preserve that fact in
+                # the returned status instead of raising and encouraging an
+                # unsafe caller retry.
+                return ActionResult(
+                    action_id=result.action_id,
+                    status=result.status,
+                    output=result.output,
+                    error=result.error,
+                    audit_error="trace recording failed",
+                )
         return result
-

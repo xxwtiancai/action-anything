@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
-from .actions import Action, ResultStatus
+from .actions import Action, ActionValidationError, ResultStatus
 from .executors import DryRunExecutor, PlaywrightExecutor
 from .policy import PolicyEngine, PolicyOutcome
-from .recorder import TraceRecorder, read_trace
+from .recorder import TraceRecorder, contains_redaction, read_trace
 from .runtime import ActionRuntime
 
 
@@ -20,23 +21,39 @@ def _load_actions(path: str | Path) -> list[Action]:
     items = payload.get("actions") if isinstance(payload, dict) else payload
     if not isinstance(items, list):
         raise ValueError("action plan must be a JSON list or an object with 'actions'")
-    return [Action.from_dict(item) for item in items]
+    actions: list[Action] = []
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise ValueError(f"action at index {index} must be an object")
+        try:
+            actions.append(Action.from_dict(item))
+        except (ActionValidationError, TypeError) as exc:
+            raise ValueError(f"invalid action at index {index}: {exc}") from exc
+    return actions
 
 
 def _confirm(action: Action, outcome: PolicyOutcome) -> bool:
+    summary = action.to_dict()
+    summary["params"].pop("text", None)
     answer = input(
-        f"Confirm {action.kind.value} ({outcome.reason})? [y/N] "
+        f"Confirm {action.kind.value} {json.dumps(summary['params'])} "
+        f"({outcome.reason})? [y/N] "
     ).strip()
     return answer.lower() in {"y", "yes"}
 
 
 def _build_runtime(args: argparse.Namespace, *, replay: bool = False) -> ActionRuntime:
+    if args.execute and not args.allowed_domain:
+        raise ValueError("--execute requires at least one --allowed-domain")
     executor = (
-        PlaywrightExecutor(headless=not args.show_browser)
+        PlaywrightExecutor(
+            allowed_domains=args.allowed_domain,
+            headless=not args.show_browser,
+        )
         if args.execute
         else DryRunExecutor()
     )
-    policy = PolicyEngine.standard(args.allowed_domain or None)
+    policy = PolicyEngine.standard(args.allowed_domain)
     recorder = None if replay else TraceRecorder(args.trace, redact=not args.unsafe_trace)
     confirmer = (lambda *_: True) if args.yes else _confirm
     return ActionRuntime(executor, policy=policy, recorder=recorder, confirm=confirmer)
@@ -65,6 +82,18 @@ def _run(args: argparse.Namespace) -> int:
             close()
 
 
+def _validate(args: argparse.Namespace) -> int:
+    actions = _load_actions(args.plan)
+    print(
+        json.dumps(
+            {"valid": True, "action_count": len(actions), "actions": [action.to_dict() for action in actions]},
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 0
+
+
 def _inspect(args: argparse.Namespace) -> int:
     for event in read_trace(args.trace):
         action = event["action"]
@@ -79,14 +108,28 @@ def _inspect(args: argparse.Namespace) -> int:
 
 def _replay(args: argparse.Namespace) -> int:
     actions: list[Action] = []
+    trace_id: str | None = None
     for event in read_trace(args.trace):
         payload = event["action"]
-        if "[REDACTED]" in payload.get("params", {}).values():
+        if contains_redaction(payload):
             raise ValueError(
                 "trace contains redacted values and cannot be replayed safely; "
                 "record a local test trace with --unsafe-trace"
             )
-        actions.append(Action.from_dict(payload))
+        event_trace_id = event.get("trace_id")
+        if event_trace_id is not None:
+            if not isinstance(event_trace_id, str) or not event_trace_id:
+                raise ValueError("trace contains an invalid trace_id")
+            if trace_id is None:
+                trace_id = event_trace_id
+            elif event_trace_id != trace_id:
+                raise ValueError(
+                    "trace contains multiple runs and cannot be replayed as one plan"
+                )
+        try:
+            actions.append(Action.from_dict(payload))
+        except (ActionValidationError, TypeError) as exc:
+            raise ValueError(f"trace contains an invalid action: {exc}") from exc
     runtime = _build_runtime(args, replay=True)
     try:
         return _print_results(runtime.execute_many(actions))
@@ -137,6 +180,12 @@ def build_parser() -> argparse.ArgumentParser:
     add_runtime_options(run)
     run.set_defaults(handler=_run)
 
+    validate = subparsers.add_parser(
+        "validate", help="validate and normalize a JSON action plan without execution"
+    )
+    validate.add_argument("plan", help="path to a JSON action plan")
+    validate.set_defaults(handler=_validate)
+
     inspect = subparsers.add_parser("inspect", help="summarize a JSONL trace")
     inspect.add_argument("trace")
     inspect.set_defaults(handler=_inspect)
@@ -154,11 +203,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return int(args.handler(args))
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
-        parser.error(str(exc))
-    return 2
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        # ``ArgumentParser.error`` terminates the interpreter, which makes the
+        # console script correct but makes this library entry point awkward to
+        # embed or test. Keep its familiar formatting and return its status.
+        parser.print_usage(sys.stderr)
+        print(f"{parser.prog}: error: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
