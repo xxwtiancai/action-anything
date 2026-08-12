@@ -1,6 +1,6 @@
 # Iteration 009: ASCII host allowlists
 
-**Status: local validation complete; independent review and remote CI pending.**
+**Status: validated locally, independently reviewed, and remote CI passed.**
 This is an Agentic Harness Engineering (AHE) maintenance record. It captures a
 small, falsifiable ActionAnything maintenance iteration; it does not add an
 Agent Harness to the product.
@@ -57,6 +57,16 @@ containment, and the CLI's real-executor construction path.
 The prior `faß.de` regression was also checked directly: the standard policy
 with an `fass.de` allowlist now returns `deny`, the Playwright precheck returns
 `False`, and explicit `xn--fa-hia.de` remains accepted.
+
+## Independent review and remote CI
+
+An independent read-only review found no P0/P1 bypasses and requested that the
+specific `fass.de` / `faß.de` collision be encoded in both policy and executor
+tests; those assertions are included above. The initial Python 3.10 remote job
+failed before installation or tests because its GitHub-hosted runner could not
+verify GitHub's HTTPS certificate during checkout. Re-running only that failed
+job passed. The resulting remote checks passed on Python 3.10, 3.11, 3.12, and
+3.13, plus distribution build, CodeQL, and dependency review.
 
 ## Residual risks
 
