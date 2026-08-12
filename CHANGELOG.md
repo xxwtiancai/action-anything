@@ -22,6 +22,8 @@ uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions and
   risk floor.
 - Default traces now retain only narrow structural/numeric fields. Use
   `--unsafe-trace` only for local, non-sensitive test data.
+- Action-intake diagnostics no longer reflect unsupported action field names,
+  parameter names, enum values, or result statuses supplied by untrusted data.
 
 ### Breaking changes
 

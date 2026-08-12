@@ -54,7 +54,7 @@ application's behalf.
 
 | Boundary | Why it matters | Current posture |
 | --- | --- | --- |
-| Model or application to action input | Model output can be malformed, over-broad, or adversarial. | **Implemented in the current code path:** canonical per-action parameter validation, minimum risk floors, and per-action policy evaluation. This does not establish that a structurally valid action has safe semantic intent. |
+| Model or application to action input | Model output can be malformed, over-broad, or adversarial. | **Implemented in the current code path:** canonical per-action parameter validation, minimum risk floors, bounded non-reflective diagnostics for unsupported outer action fields/values, and per-action policy evaluation. This does not establish that a structurally valid action has safe semantic intent. |
 | Action input to policy | A model must not be the only authority deciding whether an action is safe. | **Implemented:** deny-over-confirm-over-allow policy precedence; explicit domain allowlists for navigation; confirmation for the reversible-risk floor used by `click` and `type` proposals, as well as higher declared risks. |
 | Policy to executor | A policy decision should happen before an executor acts. | **Implemented:** `ActionRuntime` evaluates policy before calling its executor. |
 | Executor to browser or desktop | Browser content, redirects, downloads, and site behavior are untrusted. | **Implemented in the current code path:** real Playwright execution is opt-in; its configured allowlist is checked for requests and current-page URLs; downloads, Service Workers, routed WebSockets, and popups are conservatively blocked. This is defense in depth, not a complete browser, host, or network sandbox. |

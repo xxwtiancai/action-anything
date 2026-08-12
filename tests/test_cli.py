@@ -68,6 +68,29 @@ class CliTests(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertIn("invalid action at index 0", errors)
 
+    def test_validate_does_not_reflect_untrusted_action_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            sentinel = "untrusted-cli-diagnostic-" + ("x" * 4_096)
+            invalid_actions = (
+                {"kind": "click", "params": {"selector": "#x", sentinel: True}},
+                {"kind": "click", "params": {"selector": "#x"}, sentinel: True},
+                {"kind": sentinel, "params": {}},
+                {"kind": "wait", "params": {"milliseconds": 1}, "risk": sentinel},
+            )
+            for index, action in enumerate(invalid_actions):
+                with self.subTest(case=index):
+                    plan = Path(directory) / f"invalid-{index}.json"
+                    plan.write_text(
+                        json.dumps({"actions": [action]}), encoding="utf-8"
+                    )
+
+                    code, _, errors = self._main(["validate", str(plan)])
+
+                    self.assertEqual(code, 2)
+                    self.assertIn("invalid action at index 0", errors)
+                    self.assertNotIn(sentinel, errors)
+                    self.assertLessEqual(len(errors), 1_024)
+
     def test_real_execution_requires_domain_allowlist(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             plan = Path(directory) / "plan.json"
