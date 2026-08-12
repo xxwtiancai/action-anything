@@ -54,6 +54,14 @@ print(result.to_dict())
 - Navigation can be restricted with repeatable `--allowed-domain` options.
 - Real browser execution is always opt-in.
 
+## Architecture and contributing
+
+- Read the [architecture overview](docs/architecture.md) to add adapters,
+  policies, or executors.
+- See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
+- Report vulnerabilities using the private process in [SECURITY.md](SECURITY.md).
+- Follow planned work or propose a use case through GitHub Issues.
+
 ## Status
 
 ActionAnything is an early-stage open-source project. APIs may change before
