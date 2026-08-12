@@ -25,6 +25,11 @@ class RiskDowngradingPolicy:
         return None
 
 
+class DivergentText(str):
+    def __str__(self) -> str:
+        return "https://example.com/"
+
+
 class PolicyTests(unittest.TestCase):
     def test_standard_policy_confirms_untrusted_click_and_type_actions(self) -> None:
         for action in (
@@ -96,6 +101,17 @@ class PolicyTests(unittest.TestCase):
         ):
             with self.subTest(url=url):
                 self.assertFalse(is_public_http_url(url))
+
+    def test_policy_observes_the_base_value_of_a_string_subclass(self) -> None:
+        action = Action(
+            ActionKind.NAVIGATE,
+            {"url": DivergentText("http://127.0.0.1/")},
+        )
+
+        self.assertIs(
+            PolicyEngine.standard(["example.com"]).evaluate(action).decision,
+            Decision.DENY,
+        )
 
     def test_navigation_keeps_public_and_hex_looking_domain_names_distinct(self) -> None:
         self.assertTrue(is_public_http_url("https://8.8.8.8/"))

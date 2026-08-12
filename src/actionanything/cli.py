@@ -16,8 +16,11 @@ from .runtime import ActionRuntime, ExecutionBudget
 
 
 def _load_actions(path: str | Path) -> list[Action]:
-    with Path(path).open(encoding="utf-8") as stream:
-        payload = json.load(stream)
+    try:
+        with Path(path).open(encoding="utf-8") as stream:
+            payload = json.load(stream)
+    except RecursionError:
+        raise ValueError("action plan is nested too deeply") from None
     if isinstance(payload, dict):
         if "budget" in payload:
             raise ValueError(
