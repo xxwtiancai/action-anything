@@ -1,0 +1,11 @@
+# Default ownership for this early-stage project. GitHub enforces this file only
+# when branch protection or rulesets require code-owner review.
+* @xxwtiancai
+
+# Safety-sensitive project controls and public project guidance.
+/.github/ @xxwtiancai
+/docs/ @xxwtiancai
+/src/actionanything/actions.py @xxwtiancai
+/src/actionanything/policy.py @xxwtiancai
+/src/actionanything/executors.py @xxwtiancai
+/src/actionanything/recorder.py @xxwtiancai
