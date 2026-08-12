@@ -1,6 +1,6 @@
 # 迭代 002：Trace 写入完整性
 
-**状态：评审修订完成，待 PR #2 更新提交与远程门禁复核。** 本记录遵循
+**状态：PR #2 已通过远程门禁，待维护者合入。** 本记录遵循
 [AHE 维护闭环](../../AGENTS.md)：它是对 ActionAnything 的一次可独立回退的
 证据完整性改进，不引入新的产品 Harness、模型调用或外部权限。
 
@@ -50,10 +50,12 @@ git diff --check
 零进度测试断言底层 recorder 抛错且 runtime 返回 `audit_error`；部分写入后失败的
 测试确认既有事件不受影响、下一条事件可解析。
 
-随后运行了同一 Python 3.12 环境的全量离线测试：**73 项通过**。本 PR 先前提交
-的 GitHub Actions CI（Python 3.10–3.13 与构建）、CodeQL 和依赖审查均通过；本次
-评审修订提交将重新触发这些远程门禁，并新增 Windows Python 3.10 的 recorder/runtime
-定向门禁。真实并发文件系统压力测试尚未运行。
+随后运行了同一 Python 3.12 环境的全量离线测试：**73 项通过**。PR #2 的 GitHub
+Actions 门禁也全部通过：Linux Python 3.10–3.13 矩阵、分发构建、CodeQL 与依赖审查，
+以及新增的 Windows Python 3.10 recorder/runtime 定向任务。该 Windows 任务实跑
+23 项测试，其中 2 项因 POSIX 锁或符号链接/权限语义而按预期跳过；其余用例覆盖
+Windows 的单写入、短写、回滚和普通 recorder 失败路径。真实并发文件系统压力测试
+尚未运行。
 
 ## 评审驱动修正
 
@@ -62,9 +64,10 @@ git diff --check
   串行化；它只覆盖使用相同锁协议的本地写入者。
 - 回滚失败不再替换原始写入或中断异常；附加诊断仅作为异常备注（Python 3.11+）或
   私有属性（Python 3.10）保留。
-- Windows 的字节写入现在显式使用 `O_BINARY`。其 `LK_LOCK` 在锁竞争持续超过平台
-  的有限等待窗口时会在写入前以普通 I/O 错误失败；`ActionRuntime` 会把这种普通
-  recorder 错误标记为 `audit_error`，而不是写入未受保护的事件。
+- Windows 的字节写入现在显式使用 `O_BINARY`。Windows Python 3.10 门禁已验证
+  `msvcrt` 锁分支可运行；其 `LK_LOCK` 在锁竞争持续超过平台的有限等待窗口时会在
+  写入前以普通 I/O 错误失败，`ActionRuntime` 会把这种普通 recorder 错误标记为
+  `audit_error`，而不是写入未受保护的事件。
 - 本记录不再包含维护者机器的绝对路径或用户名。
 
 ## 残余风险与下一轮问题
