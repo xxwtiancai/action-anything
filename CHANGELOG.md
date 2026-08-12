@@ -14,6 +14,8 @@ uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions and
   unsupported calls and pending provider safety checks.
 - Browser containment, trace-redaction, CodeQL/dependency-review, release, and
   community-health foundations, plus AHE iteration records for maintainers.
+- Optional exact `SelectorAllowlistPolicy` for least-privilege `click` and
+  `type` target admission, while retaining confirmation on selector matches.
 
 ### Changed
 
