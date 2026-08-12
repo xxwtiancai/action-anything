@@ -1,6 +1,6 @@
 # Iteration 012: Safe action-intake diagnostics
 
-**Status: local validation complete; independent review and remote CI pending.**
+**Status: local validation, independent review, and remote CI passed.**
 This is an Agentic Harness Engineering (AHE) maintenance record. It describes
 a small, falsifiable ActionAnything improvement; it does not add an Agent
 Harness to the product.
@@ -50,16 +50,31 @@ git diff --check
 ```
 
 Results: **18 targeted tests passed** and the working-tree format check
-passed. The new regressions use a 4,096-character sentinel and verify it is
-absent from direct validation errors and CLI stderr, while the CLI still names
-the action index and stable rejection category.
+passed. The complete offline suite also passed: **69 tests**. Source
+compilation passed with the same temporary cache. The new regressions use a
+4,096-character sentinel and verify it is absent from direct validation errors
+and CLI stderr, while the CLI still names the action index and stable rejection
+category.
+
+## Independent review and remote CI
+
+An independent read-only review found no P0/P1 issue in the scoped outer
+action-intake paths. It confirmed that the target unknown top-level field,
+unknown parameter, unsupported kind/risk, and unsupported result-status paths
+all use stable messages without retaining the supplied sentinel.
+
+Remote CI passed on Python 3.10, 3.11, 3.12, and 3.13, plus distribution
+build, Python analysis, CodeQL, and dependency review.
 
 ## Residual risks and next question
 
 This iteration does not make application logs, custom exception handlers,
 untrusted `ActionResult.output`, metadata paths, or trace artifacts safe to
-share. Callers must still avoid placing secrets in plans and must handle their
-own logs safely.
+share. In particular, nested invalid metadata/output keys can still appear in
+the older recursive field-path diagnostic; their correction belongs to the
+metadata and trace-input boundaries rather than this outer-intake change.
+Callers must still avoid placing secrets in plans and must handle their own
+logs safely.
 
 The next higher-priority runtime iteration is to require a confirmation
 handler to return the literal built-in `True`, and to reject non-canonical
