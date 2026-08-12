@@ -42,6 +42,28 @@ Result: **77 tests passed**, including Draft 2020-12 meta-schema checks, all
 six canonical action kinds, representative schema rejection cases, plan
 envelope behavior, and CLI/API equivalence.
 
+### Review follow-up
+
+An independent PR review found that repeated selector and coordinate schemas
+shared mutable dict instances *within one exported document*. A caller who
+customized one nested value in memory could therefore alter another definition
+unexpectedly. The export now creates a fresh dict at every insertion site, and
+a regression test mutates `clickParams` then proves the corresponding
+`typeParams` and `scrollParams` definitions remain unchanged.
+
+After that follow-up, ran with Python 3.12 and the declared development-only
+dependency in a temporary directory:
+
+```bash
+PYTHONPATH=/private/tmp/actionanything-schema-py312-dev:src \
+  python -m unittest discover -s tests -v
+PYTHONPYCACHEPREFIX=/private/tmp/actionanything-schema-pr4-compile-pycache \
+  python -m compileall -q src
+git diff --check
+```
+
+Result: **78 tests passed**; compilation and whitespace checks passed.
+
 Also built an sdist and wheel, ran `twine check`, installed the wheel into a
 fresh temporary environment, then verified `aa schema action`, `aa schema
 plan`, JSON parsing, and `aa validate examples/demo.json`. All checks passed.

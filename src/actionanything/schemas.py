@@ -39,6 +39,16 @@ def _non_empty_string_schema(maximum: int) -> dict[str, Any]:
     }
 
 
+def _coordinate_schema() -> dict[str, Any]:
+    """Return a fresh coordinate-schema value for one insertion site."""
+
+    return {
+        "type": "number",
+        "minimum": -MAX_COORDINATE,
+        "maximum": MAX_COORDINATE,
+    }
+
+
 def _definitions() -> dict[str, Any]:
     """Build definitions shared by both public schema documents.
 
@@ -46,13 +56,6 @@ def _definitions() -> dict[str, Any]:
     freely annotate or transform a returned document without changing a later
     call to :func:`action_schema` or :func:`action_plan_schema`.
     """
-
-    selector = _non_empty_string_schema(MAX_SELECTOR_LENGTH)
-    coordinate = {
-        "type": "number",
-        "minimum": -MAX_COORDINATE,
-        "maximum": MAX_COORDINATE,
-    }
 
     definitions: dict[str, Any] = {
         "jsonValue": {
@@ -94,9 +97,9 @@ def _definitions() -> dict[str, Any]:
         "clickParams": {
             "type": "object",
             "properties": {
-                "selector": selector,
-                "x": coordinate,
-                "y": coordinate,
+                "selector": _non_empty_string_schema(MAX_SELECTOR_LENGTH),
+                "x": _coordinate_schema(),
+                "y": _coordinate_schema(),
                 "button": {"enum": ["left", "middle", "right"]},
             },
             "additionalProperties": False,
@@ -117,7 +120,7 @@ def _definitions() -> dict[str, Any]:
             "type": "object",
             "required": ["text"],
             "properties": {
-                "selector": selector,
+                "selector": _non_empty_string_schema(MAX_SELECTOR_LENGTH),
                 "text": {"type": "string", "maxLength": MAX_TEXT_LENGTH},
                 "press_enter": {"type": "boolean"},
             },
@@ -136,8 +139,8 @@ def _definitions() -> dict[str, Any]:
                     "minimum": -MAX_SCROLL_DELTA,
                     "maximum": MAX_SCROLL_DELTA,
                 },
-                "x": coordinate,
-                "y": coordinate,
+                "x": _coordinate_schema(),
+                "y": _coordinate_schema(),
             },
             "additionalProperties": False,
             "allOf": [

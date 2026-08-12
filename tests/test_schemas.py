@@ -60,6 +60,28 @@ class SchemaContractTests(unittest.TestCase):
             "ActionAnything Action v1",
         )
 
+    def test_schema_definition_components_do_not_alias_each_other(self) -> None:
+        exported = action_schema()
+        definitions = exported["$defs"]
+
+        click_selector = definitions["clickParams"]["properties"]["selector"]
+        type_selector = definitions["typeParams"]["properties"]["selector"]
+        click_x = definitions["clickParams"]["properties"]["x"]
+        click_y = definitions["clickParams"]["properties"]["y"]
+        scroll_x = definitions["scrollParams"]["properties"]["x"]
+        scroll_y = definitions["scrollParams"]["properties"]["y"]
+
+        self.assertIsNot(click_selector, type_selector)
+        self.assertIsNot(click_x, click_y)
+        self.assertIsNot(click_x, scroll_x)
+        self.assertIsNot(scroll_x, scroll_y)
+
+        click_selector["maxLength"] = 1
+        click_x["maximum"] = 1
+        self.assertEqual(type_selector["maxLength"], 4_096)
+        self.assertEqual(click_y["maximum"], 100_000)
+        self.assertEqual(scroll_x["maximum"], 100_000)
+
     def test_all_canonical_action_kinds_match_action_schema(self) -> None:
         actions = [
             Action(ActionKind.NAVIGATE, {"url": "https://example.com"}),
