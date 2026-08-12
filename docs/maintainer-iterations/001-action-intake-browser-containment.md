@@ -1,6 +1,6 @@
 # 迭代 001：动作入口与浏览器边界
 
-**状态：本地验证完成，待 PR/远程 CI 复核。** 这是一份
+**状态：已通过 PR #1 合入 `main`。** 这是一份
 Agentic Harness Engineering（AHE）维护记录：它描述 ActionAnything 的一次
 小范围、可复验的安全迭代，而不是在产品中新增 Harness 功能。
 
@@ -77,9 +77,12 @@ aa validate /path/to/examples/demo.json
 `site-packages`，不是工作树。直接在受限工作树构建曾因无法创建 `build/`
 目录失败，因此采用干净临时副本验证打包，而不是将环境限制误报为包失败。
 
-本轮**未运行真实 Chromium 端到端测试，也未运行远程 CI、CodeQL、依赖
-审查或发布工作流**；模拟测试不能证明真实浏览器对 `file:`、`data:`、
-`blob:`、Service Worker 与 WebSocket 的完整运行时语义。
+本轮未运行真实 Chromium 端到端测试；模拟测试不能证明真实浏览器对
+`file:`、`data:`、`blob:`、Service Worker 与 WebSocket 的完整运行时语义。
+
+合入后的远程复核已完成：PR #1 的 GitHub Actions CI、CodeQL 与依赖审查均
+成功。依赖审查首次因仓库未启用 Dependency Graph 而无法运行；维护者启用该
+GitHub 仓库功能后复跑成功。发布工作流未触发，因为本轮没有发布 GitHub Release。
 
 ## 迭代中的修正
 
