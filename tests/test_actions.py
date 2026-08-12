@@ -1,7 +1,7 @@
 import unittest
 
 from actionanything import Action, ActionKind, RiskLevel
-from actionanything.actions import ActionValidationError
+from actionanything.actions import ActionValidationError, MAX_METADATA_NESTING
 
 
 class ActionTests(unittest.TestCase):
@@ -104,6 +104,55 @@ class ActionTests(unittest.TestCase):
             action.params["selector"] = "#other"  # type: ignore[index]
         with self.assertRaises(TypeError):
             action.metadata["nested"]["origin"] = "tampered"  # type: ignore[index]
+
+    def test_metadata_normalization_has_a_stable_nesting_boundary(self) -> None:
+        metadata: dict[str, object] = {}
+        cursor = metadata
+        for _ in range(MAX_METADATA_NESTING - 1):
+            child: dict[str, object] = {}
+            cursor["child"] = child
+            cursor = child
+
+        Action(ActionKind.CLICK, {"selector": "#submit"}, metadata=metadata)
+        cursor["child"] = {}
+        payload = {"kind": "click", "params": {"selector": "#submit"}, "metadata": metadata}
+
+        for build in (
+            lambda: Action(ActionKind.CLICK, {"selector": "#submit"}, metadata=metadata),
+            lambda: Action.from_dict(payload),
+        ):
+            with self.subTest(build=build):
+                with self.assertRaisesRegex(ActionValidationError, "nested containers"):
+                    build()
+
+    def test_metadata_normalization_rejects_circular_references(self) -> None:
+        metadata: dict[str, object] = {}
+        metadata["self"] = metadata
+        payload = {"kind": "click", "params": {"selector": "#submit"}, "metadata": metadata}
+
+        for build in (
+            lambda: Action(ActionKind.CLICK, {"selector": "#submit"}, metadata=metadata),
+            lambda: Action.from_dict(payload),
+        ):
+            with self.subTest(build=build):
+                with self.assertRaisesRegex(ActionValidationError, "circular references"):
+                    build()
+
+    def test_metadata_cycle_detection_allows_shared_children(self) -> None:
+        shared = {"source": "provider"}
+        action = Action(
+            ActionKind.CLICK,
+            {"selector": "#submit"},
+            metadata={"left": shared, "right": shared},
+        )
+        self.assertEqual(action.metadata["left"], {"source": "provider"})
+        self.assertEqual(action.metadata["right"], {"source": "provider"})
+
+        metadata: dict[str, object] = {}
+        child: list[object] = [metadata]
+        metadata["child"] = child
+        with self.assertRaisesRegex(ActionValidationError, "circular references"):
+            Action(ActionKind.CLICK, {"selector": "#submit"}, metadata=metadata)
 
     def test_payload_fields_are_strict(self) -> None:
         with self.assertRaisesRegex(ActionValidationError, "unsupported field"):

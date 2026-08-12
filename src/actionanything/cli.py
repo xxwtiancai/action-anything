@@ -16,8 +16,11 @@ from .runtime import ActionRuntime
 
 
 def _load_actions(path: str | Path) -> list[Action]:
-    with Path(path).open(encoding="utf-8") as stream:
-        payload = json.load(stream)
+    try:
+        with Path(path).open(encoding="utf-8") as stream:
+            payload = json.load(stream)
+    except RecursionError as exc:
+        raise ValueError("action plan is nested too deeply") from exc
     items = payload.get("actions") if isinstance(payload, dict) else payload
     if not isinstance(items, list):
         raise ValueError("action plan must be a JSON list or an object with 'actions'")

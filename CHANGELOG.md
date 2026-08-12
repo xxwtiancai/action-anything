@@ -17,6 +17,9 @@ uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions and
 
 ### Changed
 
+- Action metadata now has a 64-container nesting limit and rejects circular
+  Python container references with a stable validation error. This bounds
+  recursive normalization; it is not a general JSON size or key-count quota.
 - The standard policy now requires an explicit domain allowlist for all
   navigation, including dry-run, and confirms `click`/`type` at the reversible
   risk floor.
