@@ -24,7 +24,8 @@ uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions and
   `--unsafe-trace` only for local, non-sensitive test data.
 - Trace recording now retries positive short writes and reports zero-progress
   writes as an audit failure instead of silently accepting a truncated JSONL
-  event.
+  event. Cooperating local trace writers serialize an event write and possible
+  rollback so one recorder does not truncate another recorder's event.
 
 ### Breaking changes
 

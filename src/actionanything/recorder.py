@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 import os
 import stat
@@ -195,9 +196,10 @@ def _write_all(descriptor: int, payload: bytes) -> None:
     descriptor case; no forward progress is an explicit recorder failure for
     the runtime to surface as an audit error.
 
-    This helper does not claim multi-process transactionality.  Applications
-    that share a trace among writers still need a single-writer or locking
-    strategy.
+    ``TraceRecorder.record`` holds an advisory target-file lock around this
+    write and a possible rollback for cooperating local writers.  That does
+    not make arbitrary or older writers transactional, and it does not turn a
+    trace into a durable or tamper-proof audit store.
     """
 
     remaining = memoryview(payload)
@@ -216,6 +218,99 @@ def _write_all(descriptor: int, payload: bytes) -> None:
         ):
             raise OSError("could not write complete trace event")
         remaining = remaining[written:]
+
+
+def _note_recovery_failure(
+    original: BaseException,
+    operation: str,
+    recovery_error: OSError,
+) -> None:
+    """Preserve the original failure while retaining recovery diagnostics.
+
+    Python 3.11 added ``BaseException.add_note``. The project also supports
+    Python 3.10, where a private attribute is the least invasive way to keep
+    the otherwise secondary recovery failure available to a direct caller.
+    The runtime deliberately does not reflect either exception text.
+    """
+
+    detail = f"ActionAnything {operation}: {recovery_error}"
+    add_note = getattr(original, "add_note", None)
+    if callable(add_note):
+        add_note(detail)
+        return
+    try:
+        notes = tuple(getattr(original, "_actionanything_recovery_notes", ()))
+        setattr(original, "_actionanything_recovery_notes", (*notes, detail))
+    except (AttributeError, TypeError):
+        # A caller still receives the original exception even if its concrete
+        # implementation cannot accept optional diagnostic attributes.
+        pass
+
+
+@contextmanager
+def _exclusive_trace_writer_lock(descriptor: int) -> Iterator[None]:
+    """Serialize cooperating trace writers for one write/rollback section.
+
+    Locks are advisory: they protect recorders that use this same protocol on
+    a local filesystem. They do not constrain old versions, arbitrary file
+    writers, or every network-filesystem implementation. Unsupported
+    platforms fail closed before an event can be appended.
+    """
+
+    if os.name == "posix":
+        try:
+            import fcntl
+        except ImportError as exc:  # pragma: no cover - defensive platform guard
+            raise OSError("exclusive trace writer locking is unavailable") from exc
+
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+
+        def unlock() -> None:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+
+    elif os.name == "nt":
+        try:
+            import msvcrt
+        except ImportError as exc:  # pragma: no cover - defensive platform guard
+            raise OSError("exclusive trace writer locking is unavailable") from exc
+
+        # ``msvcrt.locking`` locks a range at the current file position. The
+        # byte-zero protocol works for empty files too and O_APPEND continues
+        # to place the actual event at EOF.
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        msvcrt.locking(descriptor, msvcrt.LK_LOCK, 1)
+
+        def unlock() -> None:
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+
+    else:  # pragma: no cover - Python's supported hosts are POSIX or Windows
+        raise OSError("exclusive trace writer locking is unsupported on this platform")
+
+    try:
+        yield
+    except BaseException as original:
+        try:
+            unlock()
+        except OSError as release_error:
+            _note_recovery_failure(original, "could not release trace writer lock", release_error)
+        raise
+    else:
+        # On a normal path a release failure is itself an audit failure. It is
+        # intentionally not hidden, so the runtime can preserve the action
+        # result while setting ``audit_error``.
+        unlock()
+
+
+def _validated_trace_descriptor(descriptor: int) -> os.stat_result:
+    """Return a descriptor's details after validating the trace-file boundary."""
+
+    details = os.fstat(descriptor)
+    if not stat.S_ISREG(details.st_mode):
+        raise OSError("trace path must be a regular file")
+    if os.name != "nt" and details.st_mode & 0o077:
+        raise OSError("existing trace file must be owner-readable only")
+    return details
 
 
 class TraceRecorder:
@@ -339,6 +434,10 @@ class TraceRecorder:
         path = self._safe_trace_path()
         encoded = (json.dumps(event, ensure_ascii=False, default=str) + "\n").encode("utf-8")
         flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
+        # ``encoded`` is already UTF-8 bytes.  Request binary mode where the
+        # host exposes it so Windows does not translate the JSONL newline.
+        if hasattr(os, "O_BINARY"):
+            flags |= os.O_BINARY
         if hasattr(os, "O_NOFOLLOW"):
             flags |= os.O_NOFOLLOW
         try:
@@ -346,24 +445,28 @@ class TraceRecorder:
         except OSError as exc:
             raise OSError("could not open trace file safely") from exc
         try:
-            details = os.fstat(descriptor)
-            if not stat.S_ISREG(details.st_mode):
-                raise OSError("trace path must be a regular file")
-            if os.name != "nt" and details.st_mode & 0o077:
-                raise OSError("existing trace file must be owner-readable only")
-            write_start = details.st_size
-            try:
-                _write_all(descriptor, encoded)
-            except BaseException:
-                # A later short-write failure must not leave an unterminated
-                # JSON line in front of the next event. This rollback assumes
-                # the recorder has a single writer; a shared trace needs an
-                # application-provided lock or stronger storage boundary.
+            # Validate before trying to lock an arbitrary descriptor, then
+            # revalidate after acquiring the lock to obtain a stable EOF for
+            # this cooperating-writer critical section.
+            _validated_trace_descriptor(descriptor)
+            with _exclusive_trace_writer_lock(descriptor):
+                write_start = _validated_trace_descriptor(descriptor).st_size
                 try:
-                    os.ftruncate(descriptor, write_start)
-                except OSError as exc:
-                    raise OSError("could not restore trace after incomplete write") from exc
-                raise
+                    _write_all(descriptor, encoded)
+                except BaseException as write_error:
+                    # A later short-write failure must not leave an
+                    # unterminated JSON line in front of the next event. The
+                    # lock prevents a cooperating writer from being truncated
+                    # between this event's EOF snapshot and its rollback.
+                    try:
+                        os.ftruncate(descriptor, write_start)
+                    except OSError as rollback_error:
+                        _note_recovery_failure(
+                            write_error,
+                            "could not restore trace after incomplete write",
+                            rollback_error,
+                        )
+                    raise
         finally:
             os.close(descriptor)
 

@@ -47,7 +47,7 @@ Agentic Harness Engineering（AHE）维护记录：它描述 ActionAnything 的�
 在 Python 3.12 的本地离线环境执行：
 
 ```bash
-PYTHONPATH=src /Users/xiongweixiao/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 \
+PYTHONPATH=src python3.12 \
   -m unittest discover -s tests -v
 ```
 
@@ -66,7 +66,7 @@ git diff --no-index --check /dev/null docs/maintainer-iterations/001-action-inta
 
 结果：通过。
 
-另在 `/private/tmp` 的干净副本中，以 Python 3.12 构建 wheel、在新的虚拟
+另在仓库外的干净临时副本中，以 Python 3.12 构建 wheel、在新的虚拟
 环境离线安装该 wheel，并运行：
 
 ```bash
