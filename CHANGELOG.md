@@ -16,6 +16,8 @@ uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions and
   community-health foundations, plus AHE iteration records for maintainers.
 - `ExecutionBudget` and matching CLI flags for trusted per-batch action-count
   and cumulative-wait limits.
+- A bounded, cycle-checked `Action.metadata` intake boundary and short,
+  non-reflective diagnostics for malformed action-plan fields and values.
 
 ### Changed
 
@@ -29,6 +31,12 @@ uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions and
 - `PolicyEngine` gives each policy an isolated canonical action snapshot;
   custom policies must return `PolicyOutcome` values rather than use action
   mutation to communicate with later policies.
+- `Action` and `ActionResult` normalize accepted scalar subclasses to their
+  built-in JSON values before validation and storage, so custom `__str__`,
+  `__int__`, or `__float__` behavior cannot change a policy or executor view
+  after intake.
+- `Action.metadata` accepts at most 64 nested mapping/list/tuple containers
+  and rejects circular references before an action reaches policy or execution.
 
 ### Breaking changes
 
@@ -56,3 +64,8 @@ uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions and
   duck-typed values and `Action` subclasses are now rejected before policy,
   confirmation, recording, or execution. A direct `execute()` override remains
   application-owned and must enforce its own boundary.
+- Accepted string, integer, and float subclasses are now stored as exact
+  built-in JSON values. Mapping keys are normalized as built-in strings and
+  reject aliases that collide after normalization. Integrations that depended
+  on custom scalar conversion, comparison, hashing, or serialization behavior
+  must pass ordinary JSON-compatible values instead.

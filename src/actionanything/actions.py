@@ -58,6 +58,7 @@ MAX_COORDINATE = 100_000
 MAX_SCROLL_DELTA = 10_000
 MAX_WAIT_MILLISECONDS = 60_000
 MAX_SCREENSHOT_PATH_LENGTH = 240
+MAX_METADATA_NESTING = 64
 
 
 # A proposal can raise its risk, but cannot lower the baseline set by trusted
@@ -79,37 +80,132 @@ def _error(message: str) -> ActionValidationError:
     return ActionValidationError(message)
 
 
-def _require_mapping(value: Any, field_name: str) -> Mapping[str, Any]:
+def _base_string(value: str) -> str:
+    """Return a built-in ``str`` without invoking an override."""
+
+    return str.__str__(value)
+
+
+def _base_int(value: int) -> int:
+    """Return a built-in ``int`` without invoking an override."""
+
+    return int.__int__(value)
+
+
+def _base_float(value: float) -> float:
+    """Return a built-in ``float`` without invoking an override."""
+
+    return float.__float__(value)
+
+
+def _require_mapping(value: Any, field_name: str) -> dict[str, Any]:
+    """Copy one mapping with built-in string keys and no alias collisions."""
+
     if not isinstance(value, Mapping):
         raise _error(f"{field_name} must be a mapping")
-    if any(not isinstance(key, str) for key in value):
-        raise _error(f"{field_name} keys must be strings")
-    return value
+    try:
+        # A dict subclass can override ``items``. Use the built-in iterator
+        # when its underlying storage is available; generic Mapping objects
+        # still need their protocol method, so normalize its failures below.
+        items = dict.items(value) if isinstance(value, dict) else value.items()
+        normalized: dict[str, Any] = {}
+        for key, item in items:
+            if not isinstance(key, str):
+                raise _error(f"{field_name} keys must be strings")
+            normalized_key = _base_string(key)
+            if normalized_key in normalized:
+                raise _error(f"{field_name} keys must be unique strings")
+            normalized[normalized_key] = item
+        return normalized
+    except ActionValidationError:
+        raise
+    except Exception:
+        raise _error(f"{field_name} must be a mapping") from None
 
 
-def _freeze_json(value: Any, field_name: str) -> Any:
-    """Validate JSON-compatible data and return an immutable deep copy."""
+def _freeze_json(
+    value: Any,
+    field_name: str,
+    *,
+    maximum_nesting: int | None = None,
+    nesting: int = 0,
+    ancestor_ids: set[int] | None = None,
+) -> Any:
+    """Validate JSON-compatible data and return an immutable deep copy.
 
-    if value is None or isinstance(value, (str, bool, int)):
+    ``field_name`` is an internal schema label, never a path built from
+    untrusted mapping keys or list indexes.  Validation diagnostics must not
+    turn arbitrary metadata or result-output strings into log output.
+    """
+
+    if value is None:
         return value
+    if isinstance(value, str):
+        return _base_string(value)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return _base_int(value)
     if isinstance(value, float):
-        if not math.isfinite(value):
+        normalized_float = _base_float(value)
+        if not math.isfinite(normalized_float):
             raise _error(f"{field_name} must not contain non-finite numbers")
-        return value
+        return normalized_float
     if isinstance(value, Mapping):
+        # Preserve the identity of the raw object, not the normalized mapping
+        # copy below. A self-referential mapping reaches this function again
+        # through an original child reference, while each normalization pass
+        # necessarily creates a fresh ``dict``.
+        raw_identity = id(value)
         mapping = _require_mapping(value, field_name)
-        return MappingProxyType(
-            {
-                key: _freeze_json(item, f"{field_name}.{key}")
-                for key, item in mapping.items()
-            }
-        )
-    if isinstance(value, (list, tuple)):
+        items = mapping.items()
+    elif isinstance(value, list):
+        raw_identity = id(value)
+        items = list.__iter__(value)
+    elif isinstance(value, tuple):
+        raw_identity = id(value)
+        items = tuple.__iter__(value)
+    else:
+        raise _error(f"{field_name} must contain JSON-compatible values")
+
+    active_ancestors: set[int] | None = None
+    if maximum_nesting is not None:
+        if nesting >= maximum_nesting:
+            raise _error(
+                f"{field_name} must not exceed {maximum_nesting} nested containers"
+            )
+        active_ancestors = ancestor_ids if ancestor_ids is not None else set()
+        if raw_identity in active_ancestors:
+            raise _error(f"{field_name} must not contain circular references")
+        active_ancestors.add(raw_identity)
+
+    try:
+        if isinstance(value, Mapping):
+            return MappingProxyType(
+                {
+                    key: _freeze_json(
+                        item,
+                        field_name,
+                        maximum_nesting=maximum_nesting,
+                        nesting=nesting + 1,
+                        ancestor_ids=active_ancestors,
+                    )
+                    for key, item in items
+                }
+            )
         return tuple(
-            _freeze_json(item, f"{field_name}[{index}]")
-            for index, item in enumerate(value)
+            _freeze_json(
+                item,
+                field_name,
+                maximum_nesting=maximum_nesting,
+                nesting=nesting + 1,
+                ancestor_ids=active_ancestors,
+            )
+            for item in items
         )
-    raise _error(f"{field_name} must contain JSON-compatible values")
+    finally:
+        if active_ancestors is not None:
+            active_ancestors.remove(raw_identity)
 
 
 def _thaw_json(value: Any) -> Any:
@@ -125,38 +221,60 @@ def _thaw_json(value: Any) -> Any:
 def _require_known_keys(
     params: Mapping[str, Any], allowed: set[str], kind: ActionKind
 ) -> None:
-    unknown = sorted(set(params).difference(allowed))
-    if unknown:
-        joined = ", ".join(repr(key) for key in unknown)
-        raise _error(f"{kind.value} does not support parameter(s): {joined}")
+    if any(key not in allowed for key in params):
+        raise _error(f"{kind.value} contains unsupported parameters")
 
 
 def _non_empty_string(value: Any, name: str, maximum: int | None = None) -> str:
-    if not isinstance(value, str) or not value.strip():
+    if not isinstance(value, str):
         raise _error(f"{name} must be a non-empty string")
-    if maximum is not None and len(value) > maximum:
+    normalized = _base_string(value)
+    if not normalized.strip():
+        raise _error(f"{name} must be a non-empty string")
+    if maximum is not None and len(normalized) > maximum:
         raise _error(f"{name} must be at most {maximum} characters")
-    return value
+    return normalized
+
+
+def _string(value: Any, name: str, maximum: int | None = None) -> str:
+    """Validate one possibly-empty string and erase a subclass behavior."""
+
+    if not isinstance(value, str):
+        raise _error(f"{name} must be a string")
+    normalized = _base_string(value)
+    if maximum is not None and len(normalized) > maximum:
+        raise _error(f"{name} must be at most {maximum} characters")
+    return normalized
 
 
 def _bounded_int(value: Any, name: str, minimum: int, maximum: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise _error(f"{name} must be an integer")
-    if not minimum <= value <= maximum:
+    normalized = _base_int(value)
+    if not minimum <= normalized <= maximum:
         raise _error(f"{name} must be between {minimum} and {maximum}")
-    return value
+    return normalized
 
 
 def _coordinate(value: Any, name: str) -> int | float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool):
         raise _error(f"{name} must be a finite number")
-    if not math.isfinite(float(value)):
+    if isinstance(value, int):
+        normalized: int | float = _base_int(value)
+        # Integers are finite by definition. Avoid ``math.isfinite`` here:
+        # converting an otherwise valid large int to float can overflow before
+        # its ordinary coordinate bound rejects it.
+    elif isinstance(value, float):
+        normalized = _base_float(value)
+        if not math.isfinite(normalized):
+            raise _error(f"{name} must be a finite number")
+    else:
         raise _error(f"{name} must be a finite number")
-    if not -MAX_COORDINATE <= value <= MAX_COORDINATE:
+    if not -MAX_COORDINATE <= normalized <= MAX_COORDINATE:
         raise _error(
             f"{name} must be between {-MAX_COORDINATE} and {MAX_COORDINATE}"
         )
-    return value
+    return normalized
 
 
 def _validate_url(value: Any) -> str:
@@ -166,19 +284,19 @@ def _validate_url(value: Any) -> str:
     try:
         parsed = urlparse(url)
         hostname = parsed.hostname
-    except ValueError as exc:
+    except ValueError:
         # ``urlparse`` defers some invalid IPv6-bracket errors until the
         # hostname is accessed.  Keep the public intake contract uniform:
         # malformed untrusted input must always produce ActionValidationError.
-        raise _error("navigate.url must be a valid HTTP(S) URL") from exc
+        raise _error("navigate.url must be a valid HTTP(S) URL") from None
     if parsed.scheme not in {"http", "https"} or not hostname:
         raise _error("navigate.url must be a valid HTTP(S) URL")
     if parsed.username is not None or parsed.password is not None:
         raise _error("navigate.url must not include credentials")
     try:
         port = parsed.port
-    except ValueError as exc:
-        raise _error("navigate.url must use a valid port") from exc
+    except ValueError:
+        raise _error("navigate.url must use a valid port") from None
     if port is not None and not 1 <= port <= 65_535:
         raise _error("navigate.url must use a port between 1 and 65535")
     return url
@@ -242,9 +360,10 @@ def _validate_params(kind: ActionKind, raw_params: Mapping[str, Any]) -> dict[st
         _require_known_keys(params, {"selector", "text", "press_enter"}, kind)
         if "text" not in params or not isinstance(params["text"], str):
             raise _error("type requires string parameter 'text'")
-        if len(params["text"]) > MAX_TEXT_LENGTH:
+        text = _base_string(params["text"])
+        if len(text) > MAX_TEXT_LENGTH:
             raise _error(f"type.text must be at most {MAX_TEXT_LENGTH} characters")
-        normalized = {"text": params["text"]}
+        normalized = {"text": text}
         if "selector" in params:
             normalized["selector"] = _non_empty_string(
                 params["selector"], "type.selector", MAX_SELECTOR_LENGTH
@@ -303,27 +422,25 @@ def _validate_params(kind: ActionKind, raw_params: Mapping[str, Any]) -> dict[st
             normalized["full_page"] = params["full_page"]
         return normalized
 
-    raise _error(f"unsupported action kind: {kind!r}")
+    raise _error("unsupported action kind")
 
 
 def _coerce_kind(value: Any) -> ActionKind:
-    if isinstance(value, ActionKind):
-        return value
     if not isinstance(value, str):
         raise _error("action kind must be an ActionKind or string")
     try:
-        return ActionKind(value)
-    except ValueError as exc:
-        raise _error(f"unsupported action kind: {value!r}") from exc
+        return ActionKind(_base_string(value))
+    except ValueError:
+        raise _error("unsupported action kind") from None
 
 
 def _coerce_risk(value: Any) -> RiskLevel:
     if isinstance(value, bool) or not isinstance(value, (RiskLevel, int)):
         raise _error("action risk must be an integer RiskLevel")
     try:
-        return RiskLevel(value)
-    except ValueError as exc:
-        raise _error(f"unsupported action risk: {value!r}") from exc
+        return RiskLevel(_base_int(value))
+    except ValueError:
+        raise _error("unsupported action risk") from None
 
 
 @dataclass(frozen=True)
@@ -341,16 +458,20 @@ class Action:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.id, str) or not self.id.strip():
-            raise _error("action id must be a non-empty string")
-        if len(self.id) > 256:
-            raise _error("action id must be at most 256 characters")
+        action_id = _non_empty_string(self.id, "action id", 256)
 
         kind = _coerce_kind(self.kind)
         declared_risk = _coerce_risk(self.risk)
         normalized_params = _validate_params(kind, self.params)
-        metadata = _freeze_json(_require_mapping(self.metadata, "action metadata"), "metadata")
+        if not isinstance(self.metadata, Mapping):
+            raise _error("action metadata must be a mapping")
+        metadata = _freeze_json(
+            self.metadata,
+            "metadata",
+            maximum_nesting=MAX_METADATA_NESTING,
+        )
 
+        object.__setattr__(self, "id", action_id)
         object.__setattr__(self, "kind", kind)
         object.__setattr__(self, "risk", RiskLevel(max(declared_risk, MINIMUM_RISK[kind])))
         object.__setattr__(self, "params", _freeze_json(normalized_params, "params"))
@@ -362,10 +483,8 @@ class Action:
 
         payload = _require_mapping(payload, "action payload")
         allowed = {"id", "kind", "params", "risk", "metadata"}
-        unknown = sorted(set(payload).difference(allowed))
-        if unknown:
-            joined = ", ".join(repr(key) for key in unknown)
-            raise _error(f"action payload has unsupported field(s): {joined}")
+        if any(key not in allowed for key in payload):
+            raise _error("action payload contains unsupported fields")
         if "kind" not in payload:
             raise _error("action payload requires 'kind'")
         action_id = payload.get("id", uuid4().hex)
@@ -381,10 +500,10 @@ class Action:
         """Return a normal JSON-compatible deep copy."""
 
         return {
-            "id": self.id,
+            "id": _base_string(self.id),
             "kind": self.kind.value,
             "params": _thaw_json(self.params),
-            "risk": int(self.risk),
+            "risk": _base_int(self.risk),
             "metadata": _thaw_json(self.metadata),
         }
 
@@ -400,19 +519,38 @@ class ActionResult:
     audit_error: str | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.action_id, str) or not self.action_id.strip():
-            raise ValueError("result action_id must be a non-empty string")
         try:
-            status = ResultStatus(self.status)
-        except ValueError as exc:
-            raise ValueError(f"unsupported result status: {self.status!r}") from exc
-        output = _freeze_json(_require_mapping(self.output, "result output"), "output")
-        if self.error is not None and not isinstance(self.error, str):
-            raise TypeError("result error must be a string or None")
-        if self.audit_error is not None and not isinstance(self.audit_error, str):
-            raise TypeError("result audit_error must be a string or None")
+            action_id = _non_empty_string(self.action_id, "result action_id")
+        except ActionValidationError:
+            raise ValueError("result action_id must be a non-empty string") from None
+        try:
+            if not isinstance(self.status, str):
+                raise ValueError
+            status = ResultStatus(_base_string(self.status))
+        except (TypeError, ValueError):
+            raise ValueError("unsupported result status") from None
+        if not isinstance(self.output, Mapping):
+            raise TypeError("result output must be a mapping")
+        output = _freeze_json(self.output, "output")
+        if self.error is not None:
+            try:
+                error = _string(self.error, "result error")
+            except ActionValidationError:
+                raise TypeError("result error must be a string or None") from None
+        else:
+            error = None
+        if self.audit_error is not None:
+            try:
+                audit_error = _string(self.audit_error, "result audit_error")
+            except ActionValidationError:
+                raise TypeError("result audit_error must be a string or None") from None
+        else:
+            audit_error = None
+        object.__setattr__(self, "action_id", action_id)
         object.__setattr__(self, "status", status)
         object.__setattr__(self, "output", output)
+        object.__setattr__(self, "error", error)
+        object.__setattr__(self, "audit_error", audit_error)
 
     def to_dict(self) -> dict[str, Any]:
         return {

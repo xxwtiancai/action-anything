@@ -22,44 +22,27 @@ def _canonicalize_runtime_action(action: object) -> Action:
     attributes would let an in-process integration bypass that intake
     boundary.  Subclasses can override attributes or initialization behavior,
     so the runtime deliberately accepts the exact canonical type. Rebuilding
-    its public representation also protects this boundary from a caller that
+    it from its fields also protects this boundary from a caller that
     used ``object.__setattr__`` to tamper with an otherwise frozen instance.
     """
 
     if type(action) is not Action:
         raise TypeError("action must be a canonical Action")
     try:
-        # Copy scalars and containers into ordinary JSON-like values before
-        # the Action schema runs. Use exact base-type accessors first: a
-        # generic coercion can call an overridden ``str``/``int`` method on a
-        # subclass and turn the snapshot into attacker-controlled data.
-        payload = _json_primitive_snapshot(action.to_dict())
-        return Action.from_dict(payload)
+        # Re-enter the action schema from raw fields rather than ``to_dict``.
+        # An exact Action can still be tampered with through Python object
+        # internals, including an instance-level replacement for ``to_dict``.
+        # The schema canonicalizes scalar/container subclasses before policy
+        # or executor hooks inspect the resulting snapshot.
+        return Action(
+            id=action.id,
+            kind=action.kind,
+            params=action.params,
+            risk=action.risk,
+            metadata=action.metadata,
+        )
     except Exception:
         raise TypeError("action must be a canonical Action") from None
-
-
-def _json_primitive_snapshot(value: object) -> object:
-    """Copy JSON-like values while erasing scalar and container subclasses."""
-
-    if value is None:
-        return None
-    if isinstance(value, str):
-        return str.__str__(value)
-    if isinstance(value, bool):
-        return bool(value)
-    if isinstance(value, int):
-        return int.__int__(value)
-    if isinstance(value, float):
-        return float.__float__(value)
-    if isinstance(value, dict):
-        return {
-            _json_primitive_snapshot(key): _json_primitive_snapshot(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, (list, tuple)):
-        return [_json_primitive_snapshot(item) for item in value]
-    raise TypeError("action must be a canonical Action")
 
 
 @dataclass(frozen=True)
