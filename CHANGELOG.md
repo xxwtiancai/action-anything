@@ -12,6 +12,10 @@ uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions and
 - Strict canonical validation for built-in action plans, an `aa validate`
   command, and an OpenAI Responses `computer_call` normalizer that rejects
   unsupported calls and pending provider safety checks.
+- A strict Anthropic Computer Use `tool_use` adapter for direct, version-bound
+  coordinate clicks, focused typing, bounded waits, and screenshots. It
+  rejects unsupported or ambiguous provider actions rather than approximating
+  them.
 - Browser containment, trace-redaction, CodeQL/dependency-review, release, and
   community-health foundations, plus AHE iteration records for maintainers.
 

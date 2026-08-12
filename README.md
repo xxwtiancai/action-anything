@@ -12,7 +12,8 @@ profiles, and deployment isolation.
 ## What works today
 
 - A model-agnostic schema for navigation, click, type, scroll, wait, and screenshot actions.
-- Provider adapters that normalize supported provider output without making model calls.
+- Strict OpenAI Responses and Anthropic Computer Use adapters that normalize a
+  documented action subset without making model calls.
 - A composable policy engine with risk gates, domain allowlists, and sensitive-target checks.
 - Human confirmation for actions that the configured policy gates.
 - A zero-dependency dry-run executor and an optional Playwright browser executor.
@@ -60,6 +61,43 @@ result = runtime.execute(
 )
 print(result.to_dict())
 ```
+
+## Provider adapters
+
+Adapters are parsing boundaries, not provider clients: your application makes
+the model request, binds the returned payload to its own trusted request
+configuration, runs local policy/confirmation, executes a permitted action,
+and returns any tool result or screenshot. For example, the Anthropic adapter
+accepts one direct `tool_use` block. The application must configure its tool
+version and display dimensions to match the request that produced the block:
+
+```python
+from actionanything.adapters import AnthropicComputerUseAdapter
+
+adapter = AnthropicComputerUseAdapter(
+    tool_version="computer_20250124",
+    display_width_px=1024,
+    display_height_px=768,
+)
+action = adapter.adapt(
+    {
+        "type": "tool_use",
+        "id": "toolu_example",
+        "name": "computer",
+        "caller": {"type": "direct"},
+        "input": {"action": "left_click", "coordinate": [405, 157]},
+    }
+)[0]
+```
+
+It maps only coordinate left/right/middle clicks, focused `type`, bounded
+`wait`, and `screenshot`. Omitted or `null` `caller` values preserve ordinary
+direct-tool compatibility; any non-empty caller must be exactly
+`{"type": "direct"}`. It rejects scrolling, key presses, drag/multi-click
+gestures, zoom, programmatic callers, and unknown fields rather than guessing
+their semantics. The adapter does not treat provider-side safeguards as local
+approval; use `PolicyEngine` and an application-owned confirmation flow before
+execution.
 
 ## Safety defaults
 
