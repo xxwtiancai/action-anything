@@ -96,7 +96,9 @@ class SensitiveTargetPolicy:
     def evaluate(self, action: Action) -> PolicyOutcome | None:
         if action.kind is not ActionKind.TYPE:
             return None
-        target = str(action.params.get("target", "")).lower()
+        target = str(
+            action.params.get("target") or action.params.get("selector", "")
+        ).lower()
         if any(term in target for term in self.terms):
             return PolicyOutcome(
                 Decision.CONFIRM,
