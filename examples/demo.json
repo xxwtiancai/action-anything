@@ -1,0 +1,20 @@
+{
+  "actions": [
+    {
+      "kind": "navigate",
+      "risk": 1,
+      "params": {
+        "url": "https://example.com"
+      }
+    },
+    {
+      "kind": "screenshot",
+      "risk": 1,
+      "params": {
+        "path": "example.png",
+        "full_page": true
+      }
+    }
+  ]
+}
+
