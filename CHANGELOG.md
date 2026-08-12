@@ -17,6 +17,10 @@ uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions and
 
 ### Changed
 
+- Domain allowlists and standard navigation now reject Unicode hostnames.
+  Internationalized domains must be configured as explicit ASCII Punycode
+  A-labels so policy comparison is not widened by a legacy IDNA conversion.
+
 - The standard policy now requires an explicit domain allowlist for all
   navigation, including dry-run, and confirms `click`/`type` at the reversible
   risk floor.
@@ -36,3 +40,5 @@ uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions and
 - `PlaywrightExecutor` now requires a non-empty `allowed_domains` allowlist,
   and default trace JSONL intentionally cannot be replayed; use an explicit,
   local `--unsafe-trace` test trace for replay.
+- Existing applications that configure Unicode domain names must migrate to
+  their intended ASCII Punycode A-labels.

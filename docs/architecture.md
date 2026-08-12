@@ -92,6 +92,12 @@ Implement `Policy.evaluate(action)`. Return `None` when the policy does not
 apply. `PolicyEngine` gives deny decisions precedence over confirmation, and
 confirmation precedence over allow.
 
+The standard domain policy accepts explicit ASCII hostnames only. When an
+application uses an internationalized domain, it must configure the intended
+Punycode A-label rather than relying on ActionAnything to convert a Unicode
+host spelling. This makes the comparison deliberately narrower than browser
+URL canonicalization; it is not a claim to solve homograph or DNS risks.
+
 ## Near-term roadmap
 
 - Additional adapters for documented computer-use model outputs.

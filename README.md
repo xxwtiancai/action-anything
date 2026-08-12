@@ -72,6 +72,10 @@ print(result.to_dict())
   `--unsafe-trace` is only for local, non-sensitive test data.
 - Navigation can be restricted with repeatable `--allowed-domain` options.
   An allowlist is a defense in depth control, not a complete network sandbox.
+- Standard navigation and domain allowlists accept only ASCII hostnames. For an
+  internationalized domain, configure the browser-targeted Punycode A-label
+  explicitly; this avoids treating Python's legacy IDNA mapping as a
+  browser-equivalent security decision.
 - The CLI defaults to dry-run. It can validate and record a plan without a
   browser, while real execution is opt-in and requires at least one
   `--allowed-domain`.

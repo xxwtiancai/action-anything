@@ -250,11 +250,27 @@ class PlaywrightExecutorTests(unittest.TestCase):
             "mailto:owner@example.com",
             "https://evil.test/script.js",
             "http://127.0.0.1/admin",
+            "https://faß.de/",
         ):
             with self.subTest(url=url):
                 route = FakeRoute(url)
                 executor._route_request(route)
                 self.assertEqual(route.events, [("abort", "blockedbyclient")])
+
+    def test_executor_requires_ascii_punycode_domain_configuration(self) -> None:
+        with self.assertRaisesRegex(ValueError, "ASCII hostnames"):
+            PlaywrightExecutor(allowed_domains=["faß.de"])
+
+        executor = PlaywrightExecutor(allowed_domains=["xn--fa-hia.de"])
+        allowed = FakeRoute("https://xn--fa-hia.de/")
+        executor._route_request(allowed)
+        self.assertEqual(allowed.events, [("continue",)])
+        self.assertFalse(executor._url_is_allowed("https://faß.de/"))
+        collision_executor = PlaywrightExecutor(allowed_domains=["fass.de"])
+        self.assertFalse(collision_executor._url_is_allowed("https://faß.de/"))
+        executor._page = FakePage("https://faß.de/")
+        with self.assertRaises(ExecutorSafetyError):
+            executor._assert_page_url_allowed()
 
     def test_start_blocks_workers_downloads_and_popups(self) -> None:
         context = FakeContext()

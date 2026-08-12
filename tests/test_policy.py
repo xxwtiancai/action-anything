@@ -5,7 +5,9 @@ from actionanything.policy import (
     DomainAllowlistPolicy,
     PolicyOutcome,
     RiskPolicy,
+    host_is_allowed,
     is_public_http_url,
+    normalize_allowed_domains,
 )
 
 
@@ -101,8 +103,45 @@ class PolicyTests(unittest.TestCase):
                     Decision.ALLOW,
                 )
 
-    def test_navigation_normalizes_unicode_localhost_before_policy(self) -> None:
-        self.assertFalse(is_public_http_url("http://ⓛocalhost/"))
+    def test_navigation_rejects_unicode_hostnames_to_avoid_idna_mismatch(self) -> None:
+        for url in (
+            "https://faß.de/",
+            "https://ｅxample.com/",
+            "https://example。com/",
+            "http://ⓛocalhost/",
+        ):
+            with self.subTest(url=url):
+                self.assertFalse(is_public_http_url(url))
+                action = Action(ActionKind.NAVIGATE, {"url": url})
+                self.assertIs(
+                    PolicyEngine.standard(["example.com"]).evaluate(action).decision,
+                    Decision.DENY,
+                )
+
+        collision_action = Action(ActionKind.NAVIGATE, {"url": "https://faß.de/"})
+        self.assertIs(
+            PolicyEngine.standard(["fass.de"]).evaluate(collision_action).decision,
+            Decision.DENY,
+        )
+
+    def test_allowlist_requires_explicit_ascii_punycode_for_internationalized_domains(self) -> None:
+        for domain in ("faß.de", "例子.测试", "ｅxample.com", "example。com"):
+            with self.subTest(domain=domain):
+                with self.assertRaisesRegex(ValueError, "ASCII hostnames"):
+                    normalize_allowed_domains([domain])
+
+        allowlist = normalize_allowed_domains(["XN--FA-HIA.DE."])
+        self.assertEqual(allowlist, frozenset({"xn--fa-hia.de"}))
+        self.assertTrue(host_is_allowed("xn--fa-hia.de", allowlist))
+        self.assertTrue(host_is_allowed("www.xn--fa-hia.de", allowlist))
+        self.assertFalse(host_is_allowed("faß.de", allowlist))
+        engine = PolicyEngine.standard(allowlist)
+        self.assertIs(
+            engine.evaluate(
+                Action(ActionKind.NAVIGATE, {"url": "https://xn--fa-hia.de/"})
+            ).decision,
+            Decision.ALLOW,
+        )
 
     def test_navigation_rejects_malformed_ports_fail_closed(self) -> None:
         for url in (
