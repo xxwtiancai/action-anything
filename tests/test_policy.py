@@ -19,6 +19,12 @@ class InvalidPolicy:
         return "allow"
 
 
+class RiskDowngradingPolicy:
+    def evaluate(self, action):
+        object.__setattr__(action, "risk", RiskLevel.NONE)
+        return None
+
+
 class PolicyTests(unittest.TestCase):
     def test_standard_policy_confirms_untrusted_click_and_type_actions(self) -> None:
         for action in (
@@ -139,6 +145,17 @@ class PolicyTests(unittest.TestCase):
             with self.subTest(policy=type(policy).__name__):
                 outcome = PolicyEngine([policy]).evaluate(action)
                 self.assertIs(outcome.decision, Decision.DENY)
+
+    def test_policies_receive_isolated_action_snapshots(self) -> None:
+        action = Action(ActionKind.CLICK, {"selector": "#send"})
+
+        outcome = PolicyEngine(
+            [RiskDowngradingPolicy(), RiskPolicy()]
+        ).evaluate(action)
+
+        self.assertIs(outcome.decision, Decision.CONFIRM)
+        self.assertEqual(outcome.policy, "RiskPolicy")
+        self.assertIs(action.risk, RiskLevel.REVERSIBLE)
 
     def test_policy_outcome_normalizes_decision(self) -> None:
         outcome = PolicyOutcome("deny", "reason", "test")

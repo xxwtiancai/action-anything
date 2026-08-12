@@ -113,8 +113,16 @@ unbudgeted.
 
 - Actions run through deterministic policies before reaching an executor.
 - The standard policy asks for confirmation before `click` and `type`
-  proposals, and for higher declared risks; it cannot prove an action's
-  business intent is safe.
+  proposals, and for higher declared risks. A confirmation handler must return
+  the literal built-in `True` to approve; every other result fails closed. It
+  cannot prove an action's business intent is safe.
+- The unoverridden base `ActionRuntime` execution pipeline accepts only exact
+  `Action` instances and rebuilds an immutable, canonical snapshot before
+  hooks run. Normalize application or provider input with `Action(...)` or
+  `Action.from_dict(...)` rather than passing duck-typed objects or subclasses.
+  An integration that directly overrides `execute()` owns and must enforce its
+  own admission and confirmation boundary; budgeted batches reject execution
+  hook overrides rather than silently bypassing them.
 - Default CLI traces retain only a narrow structural/numeric subset; action IDs,
   strings, metadata, policy text, errors, and artifact paths are redacted.
   `--unsafe-trace` is only for local, non-sensitive test data.

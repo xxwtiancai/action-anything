@@ -14,6 +14,54 @@ from .recorder import TraceRecorder
 ConfirmationHandler = Callable[[Action, PolicyOutcome], bool]
 
 
+def _canonicalize_runtime_action(action: object) -> Action:
+    """Return a freshly validated canonical snapshot for runtime hooks.
+
+    ``Action`` construction establishes immutable parameters and the trusted
+    minimum risk floor.  Accepting an object that merely has similar
+    attributes would let an in-process integration bypass that intake
+    boundary.  Subclasses can override attributes or initialization behavior,
+    so the runtime deliberately accepts the exact canonical type. Rebuilding
+    its public representation also protects this boundary from a caller that
+    used ``object.__setattr__`` to tamper with an otherwise frozen instance.
+    """
+
+    if type(action) is not Action:
+        raise TypeError("action must be a canonical Action")
+    try:
+        # Copy scalars and containers into ordinary JSON-like values before
+        # the Action schema runs. Use exact base-type accessors first: a
+        # generic coercion can call an overridden ``str``/``int`` method on a
+        # subclass and turn the snapshot into attacker-controlled data.
+        payload = _json_primitive_snapshot(action.to_dict())
+        return Action.from_dict(payload)
+    except Exception:
+        raise TypeError("action must be a canonical Action") from None
+
+
+def _json_primitive_snapshot(value: object) -> object:
+    """Copy JSON-like values while erasing scalar and container subclasses."""
+
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return str.__str__(value)
+    if isinstance(value, bool):
+        return bool(value)
+    if isinstance(value, int):
+        return int.__int__(value)
+    if isinstance(value, float):
+        return float.__float__(value)
+    if isinstance(value, dict):
+        return {
+            _json_primitive_snapshot(key): _json_primitive_snapshot(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_json_primitive_snapshot(item) for item in value]
+    raise TypeError("action must be a canonical Action")
+
+
 @dataclass(frozen=True)
 class ExecutionBudget:
     """A trusted, per-batch bound for ``ActionRuntime.execute_many``.
@@ -114,6 +162,7 @@ class ActionRuntime:
     def execute(self, action: Action) -> ActionResult:
         """Evaluate and execute one action without a batch budget."""
 
+        action = _canonicalize_runtime_action(action)
         return self._execute(action)
 
     def _execute(
@@ -121,8 +170,12 @@ class ActionRuntime:
         action: Action,
         budget_state: _ExecutionBudgetState | None = None,
     ) -> ActionResult:
+        action = _canonicalize_runtime_action(action)
         try:
-            outcome = self.policy.evaluate(action)
+            # Policy and confirmation implementations are application hooks.
+            # They receive independent snapshots so even object-internal
+            # mutation cannot alter the action retained for later execution.
+            outcome = self.policy.evaluate(_canonicalize_runtime_action(action))
         except Exception:
             outcome = PolicyOutcome(
                 Decision.DENY,
@@ -136,10 +189,16 @@ class ActionRuntime:
 
         if outcome.decision is Decision.CONFIRM:
             try:
-                approved = self.confirm is not None and self.confirm(action, outcome)
+                approved = (
+                    self.confirm(_canonicalize_runtime_action(action), outcome)
+                    if self.confirm is not None
+                    else False
+                )
             except Exception:
                 approved = False
-            if not approved:
+            # A confirmation boundary must not turn arbitrary truthy values
+            # (for example a non-empty error string) into execution consent.
+            if approved is not True:
                 result = ActionResult(
                     action.id,
                     ResultStatus.CANCELLED,
@@ -158,7 +217,7 @@ class ActionRuntime:
                 return self._record(action, budget_outcome, result)
 
         try:
-            output = self.executor.execute(action)
+            output = self.executor.execute(_canonicalize_runtime_action(action))
             status = (
                 ResultStatus.DRY_RUN
                 if getattr(self.executor, "is_dry_run", False)
@@ -217,6 +276,7 @@ class ActionRuntime:
         budget_state = _ExecutionBudgetState(budget)
         results: list[ActionResult] = []
         for action in actions:
+            action = _canonicalize_runtime_action(action)
             budget_outcome = budget_state.admit() if budget_state is not None else None
             if budget_outcome is not None:
                 result = self._record(
@@ -251,6 +311,7 @@ class ActionRuntime:
 
         results: list[ActionResult] = []
         for action in actions:
+            action = _canonicalize_runtime_action(action)
             result = self.execute(action)
             results.append(result)
             if stop_on_error and result.status in {

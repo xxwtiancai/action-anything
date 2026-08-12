@@ -43,6 +43,19 @@ These checks do not establish the semantic safety of a page, model request, or
 business operation; applications still need their own policy and human review
 for consequential work.
 
+At the base, unoverridden runtime boundary, only an exact `Action` instance is
+accepted, then its public representation is rebuilt into an immutable
+canonical snapshot. This preserves the parameters and trusted minimum-risk
+floor enforced by `Action(...)` or `Action.from_dict(...)`, including if a
+caller has tampered with a frozen instance through Python object internals.
+Integrations must normalize their own values before calling `execute()` or
+`execute_many()`. A direct `execute()` override is application-owned and must
+enforce its own admission and confirmation boundary; budgeted batches instead
+reject execution-hook overrides before consuming input. When policy returns
+`confirm`, a confirmation handler must return the literal built-in `True`.
+Missing handlers, exceptions, `1`, strings, and arbitrary truthy objects are
+all cancellation, not consent.
+
 ### Dry-run first
 
 The CLI uses `DryRunExecutor` unless a user explicitly passes `--execute`.
@@ -119,7 +132,9 @@ metadata rather than provider objects.
 
 Implement `Policy.evaluate(action)`. Return `None` when the policy does not
 apply. `PolicyEngine` gives deny decisions precedence over confirmation, and
-confirmation precedence over allow.
+confirmation precedence over allow. Each policy receives an independent
+canonical action snapshot; use the returned `PolicyOutcome`, not action-object
+mutation, to communicate with the engine or other policies.
 
 ## Near-term roadmap
 

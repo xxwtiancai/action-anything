@@ -24,6 +24,11 @@ uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions and
   risk floor.
 - Default traces now retain only narrow structural/numeric fields. Use
   `--unsafe-trace` only for local, non-sensitive test data.
+- Confirmation now accepts only the literal built-in `True`; other truthy
+  handler results fail closed as `cancelled`.
+- `PolicyEngine` gives each policy an isolated canonical action snapshot;
+  custom policies must return `PolicyOutcome` values rather than use action
+  mutation to communicate with later policies.
 
 ### Breaking changes
 
@@ -45,3 +50,9 @@ uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions and
 - A budgeted `execute_many()` now fails closed if an embedding subclass
   overrides `execute()` or `_execute()`. Unbudgeted batches retain legacy
   dispatch; compose custom policy or executor behavior for a budgeted batch.
+- The unoverridden base `ActionRuntime.execute()` and `execute_many()` accept
+  only exact `Action` objects and rebuild a canonical immutable snapshot.
+  Normalize integration input with `Action(...)` or `Action.from_dict(...)`;
+  duck-typed values and `Action` subclasses are now rejected before policy,
+  confirmation, recording, or execution. A direct `execute()` override remains
+  application-owned and must enforce its own boundary.

@@ -2,6 +2,8 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from actionanything import (
     Action,
@@ -17,6 +19,7 @@ from actionanything import (
     read_trace,
 )
 from actionanything.recorder import REDACTED, contains_redaction
+from actionanything.policy import RiskPolicy
 
 
 class FailingExecutor:
@@ -71,6 +74,20 @@ class RecordingPolicy:
         return None
 
 
+class RiskDowngradingPolicy:
+    def evaluate(self, action: Action):
+        object.__setattr__(action, "risk", RiskLevel.NONE)
+        return None
+
+
+class RecordingRecorder:
+    def __init__(self) -> None:
+        self.events: list[tuple[Action, object, object]] = []
+
+    def record(self, action, outcome, result) -> None:
+        self.events.append((action, outcome, result))
+
+
 class OverrideRuntime(ActionRuntime):
     def execute(self, action: Action):
         return __import__("actionanything").ActionResult(
@@ -83,6 +100,30 @@ class OverrideRuntime(ActionRuntime):
 class InternalOverrideRuntime(ActionRuntime):
     def _execute(self, action: Action, budget_state=None):
         return super()._execute(action, budget_state=None)
+
+
+class CountingOverrideRuntime(ActionRuntime):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.execute_calls: list[object] = []
+
+    def execute(self, action: Action):
+        self.execute_calls.append(action)
+        return __import__("actionanything").ActionResult(
+            action.id,
+            ResultStatus.DENIED,
+            error="embedding override",
+        )
+
+
+class TruthyConfirmation:
+    def __bool__(self) -> bool:
+        raise AssertionError("confirmation result must not be truth-tested")
+
+
+class SwitchText(str):
+    def __str__(self) -> str:
+        return "x" * 60_000
 
 
 class RecordingExecutor:
@@ -122,6 +163,243 @@ class RuntimeTests(unittest.TestCase):
             risk=RiskLevel.EXTERNAL,
         )
         self.assertIs(runtime.execute(action).status, ResultStatus.DRY_RUN)
+
+    def test_confirmation_requires_literal_builtin_true(self) -> None:
+        action = Action(ActionKind.CLICK, {"selector": "#approve"})
+        for response in (False, "yes", "no", 1, object(), TruthyConfirmation()):
+            with self.subTest(response_type=type(response).__name__):
+                executor = RecordingExecutor()
+                result = ActionRuntime(
+                    executor, confirm=lambda *_: response
+                ).execute(action)
+                self.assertIs(result.status, ResultStatus.CANCELLED)
+                self.assertEqual(executor.actions, [])
+
+    def test_runtime_rejects_noncanonical_action_before_any_hook(self) -> None:
+        forged = SimpleNamespace(
+            id="forged-click",
+            kind=ActionKind.CLICK,
+            params={"selector": "#submit"},
+            risk=RiskLevel.NONE,
+        )
+        executor = RecordingExecutor()
+        policy = RecordingPolicy()
+        confirmations: list[object] = []
+        runtime = ActionRuntime(
+            executor,
+            policy=PolicyEngine([policy]),
+            confirm=lambda *_: confirmations.append(object()) or True,
+        )
+
+        with self.assertRaisesRegex(TypeError, "canonical Action"):
+            runtime.execute(forged)  # type: ignore[arg-type]
+
+        self.assertEqual(policy.actions, [])
+        self.assertEqual(confirmations, [])
+        self.assertEqual(executor.actions, [])
+
+    def test_runtime_rejects_action_subclasses_before_any_hook(self) -> None:
+        class DerivedAction(Action):
+            pass
+
+        derived = DerivedAction(ActionKind.WAIT, {"milliseconds": 1})
+        executor = RecordingExecutor()
+        policy = RecordingPolicy()
+        runtime = ActionRuntime(executor, policy=PolicyEngine([policy]))
+
+        with self.assertRaisesRegex(TypeError, "canonical Action"):
+            runtime.execute(derived)
+
+        self.assertEqual(policy.actions, [])
+        self.assertEqual(executor.actions, [])
+
+    def test_runtime_recanonicalizes_tampered_exact_action_before_any_hook(self) -> None:
+        action = Action(ActionKind.CLICK, {"selector": "#submit"})
+        object.__setattr__(action, "risk", RiskLevel.NONE)
+        executor = RecordingExecutor()
+        runtime = ActionRuntime(executor)
+
+        result = runtime.execute(action)
+
+        self.assertIs(result.status, ResultStatus.CANCELLED)
+        self.assertEqual(executor.actions, [])
+
+    def test_runtime_recanonicalizes_unconstructed_exact_action(self) -> None:
+        action = object.__new__(Action)
+        object.__setattr__(action, "id", "unconstructed-click")
+        object.__setattr__(action, "kind", ActionKind.CLICK)
+        object.__setattr__(action, "params", {"selector": "#submit"})
+        object.__setattr__(action, "risk", RiskLevel.NONE)
+        object.__setattr__(action, "metadata", {})
+        executor = RecordingExecutor()
+
+        result = ActionRuntime(executor).execute(action)
+
+        self.assertIs(result.status, ResultStatus.CANCELLED)
+        self.assertEqual(executor.actions, [])
+
+    def test_runtime_private_execute_rejects_noncanonical_action_before_any_hook(self) -> None:
+        forged = SimpleNamespace(
+            id="forged-click",
+            kind=ActionKind.CLICK,
+            params={"selector": "#submit"},
+            risk=RiskLevel.NONE,
+        )
+        executor = RecordingExecutor()
+        policy = RecordingPolicy()
+        runtime = ActionRuntime(executor, policy=PolicyEngine([policy]))
+
+        with self.assertRaisesRegex(TypeError, "canonical Action"):
+            runtime._execute(forged)  # type: ignore[arg-type]
+
+        self.assertEqual(policy.actions, [])
+        self.assertEqual(executor.actions, [])
+
+    def test_confirmation_cannot_mutate_the_execution_snapshot(self) -> None:
+        action = Action(ActionKind.CLICK, {"selector": "#submit"})
+        executor = RecordingExecutor()
+
+        def mutate_confirmation(candidate, outcome):
+            object.__setattr__(candidate, "kind", ActionKind.NAVIGATE)
+            object.__setattr__(candidate, "params", {"url": "http://127.0.0.1"})
+            object.__setattr__(candidate, "risk", RiskLevel.NONE)
+            return True
+
+        result = ActionRuntime(executor, confirm=mutate_confirmation).execute(action)
+
+        self.assertIs(result.status, ResultStatus.DRY_RUN)
+        self.assertEqual(len(executor.actions), 1)
+        executed = executor.actions[0]
+        self.assertIs(executed.kind, ActionKind.CLICK)
+        self.assertEqual(executed.params, {"selector": "#submit"})
+        self.assertIs(executed.risk, RiskLevel.REVERSIBLE)
+
+    def test_policy_cannot_mutate_another_policy_input(self) -> None:
+        executor = RecordingExecutor()
+        runtime = ActionRuntime(
+            executor,
+            policy=PolicyEngine([RiskDowngradingPolicy(), RiskPolicy()]),
+        )
+
+        result = runtime.execute(Action(ActionKind.CLICK, {"selector": "#submit"}))
+
+        self.assertIs(result.status, ResultStatus.CANCELLED)
+        self.assertEqual(executor.actions, [])
+
+    def test_runtime_snapshot_normalizes_scalar_subclasses(self) -> None:
+        action = Action(ActionKind.TYPE, {"text": SwitchText("safe")})
+        executor = RecordingExecutor()
+
+        result = ActionRuntime(executor, confirm=lambda *_: True).execute(action)
+
+        self.assertIs(result.status, ResultStatus.DRY_RUN)
+        self.assertEqual(len(executor.actions), 1)
+        text = executor.actions[0].params["text"]
+        self.assertIs(type(text), str)
+        self.assertEqual(text, "safe")
+
+    def test_runtime_snapshot_uses_base_scalar_values(self) -> None:
+        class SwitchInteger(int):
+            def __int__(self) -> int:
+                return 60_000
+
+        action = Action(ActionKind.WAIT, {"milliseconds": SwitchInteger(1)})
+        executor = RecordingExecutor()
+
+        result = ActionRuntime(executor).execute(action)
+
+        self.assertIs(result.status, ResultStatus.DRY_RUN)
+        self.assertEqual(executor.actions[0].params["milliseconds"], 1)
+
+    def test_runtime_snapshot_preserves_large_valid_metadata_integers(self) -> None:
+        large_value = 10**5_000
+        action = Action(
+            ActionKind.WAIT,
+            {"milliseconds": 1},
+            metadata={"large_value": large_value},
+        )
+        executor = RecordingExecutor()
+
+        result = ActionRuntime(executor).execute(action)
+
+        self.assertIs(result.status, ResultStatus.DRY_RUN)
+        self.assertEqual(executor.actions[0].metadata["large_value"], large_value)
+
+    def test_budgeted_batch_rejects_noncanonical_action_before_budget_hooks(self) -> None:
+        forged = SimpleNamespace(
+            id="forged-wait",
+            kind=ActionKind.WAIT,
+            params={"milliseconds": 1},
+            risk=RiskLevel.NONE,
+        )
+        executor = RecordingExecutor()
+        policy = RecordingPolicy()
+        runtime = ActionRuntime(executor, policy=PolicyEngine([policy]))
+
+        with patch(
+            "actionanything.runtime._ExecutionBudgetState.admit",
+            side_effect=AssertionError("budget must not see a forged action"),
+        ):
+            with self.assertRaisesRegex(TypeError, "canonical Action"):
+                runtime.execute_many(
+                    [forged], budget=ExecutionBudget(max_actions=0)  # type: ignore[list-item]
+                )
+
+        self.assertEqual(policy.actions, [])
+        self.assertEqual(executor.actions, [])
+
+    def test_budgeted_batch_rejects_noncanonical_extra_candidate_before_denial(self) -> None:
+        class DerivedAction(Action):
+            pass
+
+        first = Action(ActionKind.WAIT, {"milliseconds": 1})
+        derived = DerivedAction(ActionKind.WAIT, {"milliseconds": 1})
+        executor = RecordingExecutor()
+        runtime = ActionRuntime(executor)
+
+        with self.assertRaisesRegex(TypeError, "canonical Action"):
+            runtime.execute_many(
+                [first, derived], budget=ExecutionBudget(max_actions=1)
+            )
+
+        self.assertEqual(executor.actions, [first])
+
+    def test_unbudgeted_batch_rejects_noncanonical_action_before_any_hook(self) -> None:
+        forged = SimpleNamespace(
+            id="forged-wait",
+            kind=ActionKind.WAIT,
+            params={"milliseconds": 1},
+            risk=RiskLevel.NONE,
+        )
+        executor = RecordingExecutor()
+        policy = RecordingPolicy()
+        recorder = RecordingRecorder()
+        runtime = ActionRuntime(
+            executor,
+            policy=PolicyEngine([policy]),
+            recorder=recorder,
+        )
+
+        with self.assertRaisesRegex(TypeError, "canonical Action"):
+            runtime.execute_many([forged])  # type: ignore[list-item]
+
+        self.assertEqual(policy.actions, [])
+        self.assertEqual(executor.actions, [])
+        self.assertEqual(recorder.events, [])
+
+    def test_unbudgeted_batch_rejects_noncanonical_action_before_execute_override(self) -> None:
+        forged = SimpleNamespace(
+            id="forged-wait",
+            kind=ActionKind.WAIT,
+            params={"milliseconds": 1},
+            risk=RiskLevel.NONE,
+        )
+        runtime = CountingOverrideRuntime(RecordingExecutor())
+
+        with self.assertRaisesRegex(TypeError, "canonical Action"):
+            runtime.execute_many([forged])  # type: ignore[list-item]
+
+        self.assertEqual(runtime.execute_calls, [])
 
     def test_action_is_immutable_through_confirmation(self) -> None:
         runtime = ActionRuntime(DryRunExecutor(), confirm=MutatingConfirmation(self))
