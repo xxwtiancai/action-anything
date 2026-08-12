@@ -55,9 +55,9 @@ After that follow-up, ran with Python 3.12 and the declared development-only
 dependency in a temporary directory:
 
 ```bash
-PYTHONPATH=/private/tmp/actionanything-schema-py312-dev:src \
+PYTHONPATH=<temporary-dev-dependencies>:src \
   python -m unittest discover -s tests -v
-PYTHONPYCACHEPREFIX=/private/tmp/actionanything-schema-pr4-compile-pycache \
+PYTHONPYCACHEPREFIX=<temporary-pycache> \
   python -m compileall -q src
 git diff --check
 ```

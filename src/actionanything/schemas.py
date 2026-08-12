@@ -29,7 +29,7 @@ ACTION_PLAN_SCHEMA_ID = "urn:actionanything:action-plan:v1"
 
 
 def _non_empty_string_schema(maximum: int) -> dict[str, Any]:
-    """Return the shared contract for a non-whitespace bounded string."""
+    """Return a fresh schema for a non-whitespace bounded string."""
 
     return {
         "type": "string",
