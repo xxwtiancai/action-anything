@@ -1,6 +1,6 @@
 # Iteration 011: Trace input normalization
 
-**Status: local validation and independent review complete; remote CI pending.**
+**Status: validated locally, independently reviewed, and remote CI passed.**
 This is an Agentic Harness Engineering (AHE) maintenance record. It captures a
 small, evidence-backed maintenance loop for ActionAnything; it does not add a
 runtime Agent Harness.
@@ -64,6 +64,9 @@ reader now share the 128-container trace-event boundary, and the writer checks
 before opening a file. Boundary verification confirmed metadata nesting through
 125 layers can write/read while 126 layers are rejected before file creation.
 The review found no remaining P0/P1 issues.
+
+Remote CI passed on Python 3.10, 3.11, 3.12, and 3.13, plus distribution build,
+CodeQL, and dependency review.
 
 ## Residual risks
 
