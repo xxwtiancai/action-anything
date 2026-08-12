@@ -185,6 +185,39 @@ def _redact_result_output(output: Mapping[str, Any]) -> dict[str, Any]:
     return redacted
 
 
+def _write_all(descriptor: int, payload: bytes) -> None:
+    """Write a complete trace event or raise instead of accepting truncation.
+
+    ``os.write`` is allowed to report a short write.  A JSONL recorder cannot
+    safely treat that as a successful event: a partially written line makes
+    later inspection and replay fail after an action may already have run.
+    Retrying a positive short write preserves the event for the ordinary file
+    descriptor case; no forward progress is an explicit recorder failure for
+    the runtime to surface as an audit error.
+
+    This helper does not claim multi-process transactionality.  Applications
+    that share a trace among writers still need a single-writer or locking
+    strategy.
+    """
+
+    remaining = memoryview(payload)
+    while remaining:
+        try:
+            written = os.write(descriptor, remaining)
+        except InterruptedError:
+            # No bytes are reported for an interrupted write, so retry the
+            # unchanged remainder rather than silently losing the event.
+            continue
+        if (
+            not isinstance(written, int)
+            or isinstance(written, bool)
+            or written <= 0
+            or written > len(remaining)
+        ):
+            raise OSError("could not write complete trace event")
+        remaining = remaining[written:]
+
+
 class TraceRecorder:
     """Write one self-contained JSON object per evaluated action.
 
@@ -318,7 +351,19 @@ class TraceRecorder:
                 raise OSError("trace path must be a regular file")
             if os.name != "nt" and details.st_mode & 0o077:
                 raise OSError("existing trace file must be owner-readable only")
-            os.write(descriptor, encoded)
+            write_start = details.st_size
+            try:
+                _write_all(descriptor, encoded)
+            except BaseException:
+                # A later short-write failure must not leave an unterminated
+                # JSON line in front of the next event. This rollback assumes
+                # the recorder has a single writer; a shared trace needs an
+                # application-provided lock or stronger storage boundary.
+                try:
+                    os.ftruncate(descriptor, write_start)
+                except OSError as exc:
+                    raise OSError("could not restore trace after incomplete write") from exc
+                raise
         finally:
             os.close(descriptor)
 

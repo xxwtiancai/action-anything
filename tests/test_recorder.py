@@ -2,6 +2,7 @@ import tempfile
 import unittest
 import os
 from pathlib import Path
+from unittest.mock import patch
 
 from actionanything import Action, ActionKind, ActionResult, Decision, ResultStatus, TraceRecorder, read_trace
 from actionanything.policy import PolicyOutcome
@@ -125,6 +126,73 @@ class TraceRedactionTests(unittest.TestCase):
         self.assertEqual(event["result"]["output"]["url"], REDACTED)
         self.assertEqual(event["result"]["error"], REDACTED)
         self.assertEqual(event["result"]["audit_error"], REDACTED)
+
+    def test_short_write_is_completed_before_record_returns(self) -> None:
+        """A positive short write must not leave a truncated JSONL event."""
+
+        action = Action(ActionKind.WAIT, {"milliseconds": 1})
+        outcome = PolicyOutcome(Decision.ALLOW, "test", "test")
+        result = ActionResult(action.id, ResultStatus.DRY_RUN)
+        real_write = os.write
+        write_lengths: list[int] = []
+
+        def short_write(descriptor: int, payload: bytes | memoryview) -> int:
+            chunk = bytes(payload)[:17]
+            write_lengths.append(len(chunk))
+            return real_write(descriptor, chunk)
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trace.jsonl"
+            with patch("actionanything.recorder.os.write", side_effect=short_write):
+                TraceRecorder(path).record(action, outcome, result)
+
+            events = list(read_trace(path))
+
+        self.assertGreater(len(write_lengths), 1)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["sequence"], 1)
+
+    def test_zero_progress_write_is_a_recorder_failure(self) -> None:
+        action = Action(ActionKind.WAIT, {"milliseconds": 1})
+        outcome = PolicyOutcome(Decision.ALLOW, "test", "test")
+        result = ActionResult(action.id, ResultStatus.DRY_RUN)
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trace.jsonl"
+            with patch("actionanything.recorder.os.write", return_value=0):
+                with self.assertRaisesRegex(OSError, "could not write complete trace event"):
+                    TraceRecorder(path).record(action, outcome, result)
+
+    def test_partial_write_then_failure_rolls_back_before_next_event(self) -> None:
+        """A failed later write cannot poison a following valid JSONL event."""
+
+        outcome = PolicyOutcome(Decision.ALLOW, "test", "test")
+        first = Action(ActionKind.WAIT, {"milliseconds": 1})
+        failed = Action(ActionKind.WAIT, {"milliseconds": 2})
+        final = Action(ActionKind.WAIT, {"milliseconds": 3})
+        real_write = os.write
+        calls = 0
+
+        def partial_then_stall(descriptor: int, payload: bytes | memoryview) -> int:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return real_write(descriptor, bytes(payload)[:17])
+            return 0
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trace.jsonl"
+            recorder = TraceRecorder(path)
+            recorder.record(first, outcome, ActionResult(first.id, ResultStatus.DRY_RUN))
+            with patch(
+                "actionanything.recorder.os.write", side_effect=partial_then_stall
+            ):
+                with self.assertRaisesRegex(OSError, "could not write complete trace event"):
+                    recorder.record(failed, outcome, ActionResult(failed.id, ResultStatus.DRY_RUN))
+            recorder.record(final, outcome, ActionResult(final.id, ResultStatus.DRY_RUN))
+            events = list(read_trace(path))
+
+        self.assertEqual([event["sequence"] for event in events], [1, 3])
 
     @unittest.skipIf(os.name == "nt", "symlink permission semantics differ on Windows")
     def test_trace_refuses_symlink_or_group_readable_existing_file(self) -> None:

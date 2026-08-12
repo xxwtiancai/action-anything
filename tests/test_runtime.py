@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from actionanything import (
     Action,
@@ -197,6 +198,18 @@ class RuntimeTests(unittest.TestCase):
         ).execute(
             Action(ActionKind.CLICK, {"selector": "button"})
         )
+        self.assertIs(result.status, ResultStatus.DRY_RUN)
+        self.assertEqual(result.audit_error, "trace recording failed")
+
+    def test_short_write_failure_marks_completed_action_for_audit(self) -> None:
+        """A recorder that cannot make progress must not look successful."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trace.jsonl"
+            runtime = ActionRuntime(DryRunExecutor(), recorder=TraceRecorder(path))
+            with patch("actionanything.recorder.os.write", return_value=0):
+                result = runtime.execute(Action(ActionKind.WAIT, {"milliseconds": 1}))
+
         self.assertIs(result.status, ResultStatus.DRY_RUN)
         self.assertEqual(result.audit_error, "trace recording failed")
 
