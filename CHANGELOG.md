@@ -29,6 +29,9 @@ uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions and
 - `PlaywrightExecutor` now permits only `GET` browser requests by default.
   Applications enabling real execution must explicitly configure every
   additional HTTP method they require.
+- Domain allowlists and standard navigation now reject Unicode hostnames.
+  Internationalized domains must be configured as explicit ASCII Punycode
+  A-labels so policy comparison is not widened by a legacy IDNA conversion.
 
 - The standard policy now requires an explicit domain allowlist for all
   navigation, including dry-run, and confirms `click`/`type` at the reversible
@@ -55,3 +58,5 @@ uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions and
   cannot be replayed; use an explicit, local `--unsafe-trace` test trace for
   replay. Applications needing `HEAD`, `OPTIONS`, or write-capable methods
   must set `allowed_request_methods` explicitly.
+- Existing applications that configure Unicode domain names must migrate to
+  their intended ASCII Punycode A-labels.

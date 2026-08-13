@@ -17,20 +17,20 @@ _DECIMAL_IPV4_PART = re.compile(r"^[0-9]+$")
 _HEXADECIMAL_IPV4_PART = re.compile(r"^0[xX][0-9a-fA-F]+$")
 
 
-def _normalize_hostname(host: str) -> str | None:
-    """Return an ASCII hostname suitable for security comparisons.
+def _normalize_ascii_hostname(host: str) -> str | None:
+    """Return an ASCII hostname suitable for exact browser-boundary matching.
 
-    Browsers apply IDNA processing before navigation.  Applying the same
-    normalization here prevents a Unicode spelling of ``localhost`` from
-    bypassing the literal-host checks below.
+    Python's built-in ``idna`` codec uses older mappings that can turn a
+    Unicode hostname into an ASCII hostname different from the one used by a
+    modern browser's WHATWG URL parser. Rather than silently claim semantic
+    equivalence, standard navigation policy accepts only explicit ASCII host
+    names. Applications using internationalized domains must provide their
+    browser-targeted Punycode A-labels as trusted configuration.
     """
 
-    if not isinstance(host, str):
+    if not isinstance(host, str) or not host.isascii():
         return None
-    try:
-        normalized = host.rstrip(".").encode("idna").decode("ascii").lower()
-    except UnicodeError:
-        return None
+    normalized = host.rstrip(".").lower()
     return normalized or None
 
 
@@ -122,7 +122,7 @@ def _public_http_hostname(url: str) -> str | None:
             return None
         if parsed.username is not None or parsed.password is not None:
             return None
-        host = _normalize_hostname(parsed.hostname or "")
+        host = _normalize_ascii_hostname(parsed.hostname or "")
         # Force validation of malformed, out-of-range, and otherwise invalid
         # ports. Port zero is not a usable remote HTTP endpoint, so reject it
         # rather than leaving interpretation to a browser.
@@ -207,10 +207,11 @@ def normalize_allowed_domains(domains: Iterable[str]) -> frozenset[str]:
             raise ValueError("allowed domains must be non-empty hostnames")
         if any(character in domain for character in ":/@?#"):
             raise ValueError("allowed domains must be hostnames, not URLs")
-        try:
-            domain = domain.encode("idna").decode("ascii").lower()
-        except UnicodeError as exc:
-            raise ValueError(f"invalid allowed domain: {value!r}") from exc
+        if not domain.isascii():
+            raise ValueError(
+                "allowed domains must use ASCII hostnames; use Punycode for internationalized domains"
+            )
+        domain = domain.lower()
         if _is_noncanonical_numeric_ipv4(domain):
             raise ValueError("allowed domains must not use numeric IP-like host forms")
         try:
@@ -236,7 +237,7 @@ def normalize_allowed_domains(domains: Iterable[str]) -> frozenset[str]:
 def host_is_allowed(host: str, allowed_domains: Iterable[str]) -> bool:
     """Return whether a hostname equals or is a subdomain of an allowlist item."""
 
-    candidate = _normalize_hostname(host)
+    candidate = _normalize_ascii_hostname(host)
     if candidate is None:
         return False
     return any(

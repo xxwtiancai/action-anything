@@ -98,6 +98,19 @@ class CliTests(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertIn("--execute requires at least one --allowed-domain", errors)
 
+    def test_real_execution_rejects_unicode_domain_configuration(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            plan = Path(directory) / "plan.json"
+            plan.write_text(
+                json.dumps({"actions": [{"kind": "click", "params": {"selector": "#x"}}]}),
+                encoding="utf-8",
+            )
+            code, _, errors = self._main(
+                ["run", str(plan), "--execute", "--allowed-domain", "faß.de"]
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("ASCII hostnames", errors)
+
     def test_replay_rejects_nested_redaction(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             trace = Path(directory) / "trace.jsonl"

@@ -137,6 +137,12 @@ selector, and returns `confirm` even on a match. It is not a CSS parser, glob,
 regular-expression matcher, page-state verifier, or replacement for the
 browser executor's domain containment.
 
+The standard domain policy accepts explicit ASCII hostnames only. When an
+application uses an internationalized domain, it must configure the intended
+Punycode A-label rather than relying on ActionAnything to convert a Unicode
+host spelling. This makes the comparison deliberately narrower than browser
+URL canonicalization; it is not a claim to solve homograph or DNS risks.
+
 ## Near-term roadmap
 
 - Additional adapters and independently reviewed provider action mappings.
