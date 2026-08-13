@@ -177,6 +177,10 @@ class SchemaContractTests(unittest.TestCase):
             {},
             {"actions": {}},
             {"actions": [{"kind": "click", "params": {}}]},
+            {
+                "actions": [action],
+                "budget": {"max_actions": 10},
+            },
         ]
         for plan in invalid_plans:
             with self.subTest(plan=plan):

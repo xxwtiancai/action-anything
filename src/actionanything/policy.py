@@ -421,7 +421,10 @@ class PolicyEngine:
     """Combine policies using deny-over-confirm-over-allow precedence.
 
     Invalid custom policy output and policy exceptions fail closed. A safety
-    control that cannot evaluate must never become an implicit allow.
+    control that cannot evaluate must never become an implicit allow. Each
+    policy receives its own canonical action snapshot, so policies communicate
+    only through returned ``PolicyOutcome`` values, never by mutating an
+    action object that a later policy will inspect.
     """
 
     def __init__(self, policies: Iterable[Policy] = ()) -> None:
@@ -448,7 +451,12 @@ class PolicyEngine:
         for policy in self.policies:
             name = type(policy).__name__
             try:
-                outcome = policy.evaluate(action)
+                # ``Action`` is frozen, but in-process extensions can still
+                # use object internals to mutate it. Rehydrate a distinct
+                # canonical value for every policy so one extension cannot
+                # downgrade the input that another safety policy evaluates.
+                policy_action = Action.from_dict(action.to_dict())
+                outcome = policy.evaluate(policy_action)
             except Exception:
                 outcomes.append(
                     PolicyOutcome(

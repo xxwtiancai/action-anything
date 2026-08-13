@@ -15,6 +15,7 @@ profiles, and deployment isolation.
 - Strict OpenAI Responses and Anthropic Computer Use adapters that normalize a
   documented action subset without making model calls.
 - A composable policy engine with risk gates, domain and exact-selector allowlists, and sensitive-target checks.
+- Trusted per-batch execution budgets for action count and cumulative wait time.
 - Human confirmation for actions that the configured policy gates.
 - A zero-dependency dry-run executor and an optional Playwright browser executor.
 - Redacted JSONL traces plus trace inspection and replay for local test data.
@@ -153,15 +154,76 @@ configuration. It does not prove selector uniqueness, page state, DOM
 stability, click effects, or cross-domain safety; retain confirmation and the
 executor domain boundary.
 
+## Bound a plan
+
+Plans remain portable data, not policy. Put a trusted budget in the application
+or CLI invocation rather than accepting it from model-generated JSON:
+
+```python
+from actionanything import ExecutionBudget
+
+results = runtime.execute_many(
+    [
+        Action(ActionKind.WAIT, {"milliseconds": 500}),
+        Action(ActionKind.WAIT, {"milliseconds": 500}),
+    ],
+    budget=ExecutionBudget(
+        max_actions=10,
+        max_total_wait_milliseconds=30_000,
+    ),
+)
+```
+
+The CLI exposes the same trusted limits. A budget denial is recorded like any
+other denial and stops the batch before later plan items are evaluated:
+
+```bash
+aa run examples/demo.json \
+  --allowed-domain example.com \
+  --max-actions 10 \
+  --max-total-wait-ms 30000
+```
+
+Budgets are local to one `execute_many()` or CLI invocation. They bound batch
+items reaching policy evaluation and cumulative *requested* `wait` milliseconds
+before calls to `Executor.execute`; a custom executor may still retry or do
+work internally. Budgets do not add cross-process quotas, network bandwidth
+controls, retries, idempotency, transaction rollback, or an input-size/memory
+limit: the CLI parses its complete JSON plan before the runtime applies a
+budget. To leave trace evidence, an API batch at its action cap may read one
+additional candidate, but that candidate never reaches policy, confirmation, or
+an executor. Bound or materialize side-effecting generators upstream.
+
+For compatibility, an unbudgeted batch still dispatches through an embedding
+subclass's execution hooks. A budgeted batch fails closed before consuming input
+when legacy `execute()` or `_execute()` hooks are overridden, because silently
+bypassing an application's approval or audit logic would be unsafe. Use
+policy/executor composition for budgeted batches, or keep the legacy override
+unbudgeted.
+
 ## Safety defaults
 
 - Actions run through deterministic policies before reaching an executor.
 - The standard policy asks for confirmation before `click` and `type`
-  proposals, and for higher declared risks; it cannot prove an action's
-  business intent is safe.
+  proposals, and for higher declared risks. A confirmation handler must return
+  the literal built-in `True` to approve; every other result fails closed. It
+  cannot prove an action's business intent is safe.
+- The unoverridden base `ActionRuntime` execution pipeline accepts only exact
+  `Action` instances and rebuilds an immutable, canonical snapshot before
+  hooks run. Normalize application or provider input with `Action(...)` or
+  `Action.from_dict(...)` rather than passing duck-typed objects or subclasses.
+  An integration that directly overrides `execute()` owns and must enforce its
+  own admission and confirmation boundary; budgeted batches reject execution
+  hook overrides rather than silently bypassing them.
 - Default CLI traces retain only a narrow structural/numeric subset; action IDs,
   strings, metadata, policy text, errors, and artifact paths are redacted.
   `--unsafe-trace` is only for local, non-sensitive test data.
+- Replay is deliberately narrower than trace inspection: it only accepts a
+  non-empty unredacted current trace run (or a consistently marker-free legacy
+  trace) whose events recorded an explicit `allow`/`confirm` decision and a
+  completed `dry_run` result. A trace is not a retry queue, so real `success`
+  events and denied, cancelled, failed, incomplete, or budget-blocked events
+  all fail closed.
 - Navigation can be restricted with repeatable `--allowed-domain` options.
   An allowlist is a defense in depth control, not a complete network sandbox.
 - Standard navigation and domain allowlists accept only ASCII hostnames. For an
@@ -196,6 +258,8 @@ The configurable set is `GET`, `HEAD`, `OPTIONS`, `POST`, `PUT`, `PATCH`, and
 `DELETE`; `CONNECT` and `TRACE` are always rejected. A cross-origin request may
 also need an explicit `OPTIONS` grant for its browser preflight. Treat every
 such grant as trusted application configuration, not action-plan data.
+- Plans cannot set their own execution limits. Configure action-count and
+  cumulative-wait budgets in trusted application code or CLI arguments.
 
 ## Architecture and contributing
 

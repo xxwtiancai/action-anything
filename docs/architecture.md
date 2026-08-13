@@ -43,12 +43,54 @@ These checks do not establish the semantic safety of a page, model request, or
 business operation; applications still need their own policy and human review
 for consequential work.
 
+At the base, unoverridden runtime boundary, only an exact `Action` instance is
+accepted, then its public representation is rebuilt into an immutable
+canonical snapshot. This preserves the parameters and trusted minimum-risk
+floor enforced by `Action(...)` or `Action.from_dict(...)`, including if a
+caller has tampered with a frozen instance through Python object internals.
+Integrations must normalize their own values before calling `execute()` or
+`execute_many()`. A direct `execute()` override is application-owned and must
+enforce its own admission and confirmation boundary; budgeted batches instead
+reject execution-hook overrides before consuming input. When policy returns
+`confirm`, a confirmation handler must return the literal built-in `True`.
+Missing handlers, exceptions, `1`, strings, and arbitrary truthy objects are
+all cancellation, not consent.
+
 ### Dry-run first
 
 The CLI uses `DryRunExecutor` unless a user explicitly passes `--execute`.
 This makes plans inspectable before they touch a browser. Dry-run does not
 bypass policy: navigation still needs an explicit allowlist, and the real
 Playwright executor additionally requires one before it can start.
+
+### Bounded batches
+
+`ExecutionBudget` is trusted application configuration for one
+`ActionRuntime.execute_many()` invocation. It bounds the number of items that
+can enter policy evaluation and, separately, the cumulative requested
+milliseconds of permitted `wait` actions. The action count is checked before
+policy evaluation so a caller cannot bypass it with an unbounded iterable and
+`stop_on_error=False`; wait time is reserved only after policy and confirmation
+allow an action to reach an executor. A budget denial is recorded as a normal
+deny outcome and stops the batch.
+
+The budget is deliberately not part of a JSON action plan, provider adapter,
+or trace replay payload: model- or provider-controlled data must not expand a
+trusted execution envelope. It is local to one call, not a distributed quota,
+rate limiter, idempotency layer, transaction, or network resource controller.
+It bounds calls to `Executor.execute`, not retries or side effects an
+application-provided executor performs inside one call. It also does not bound
+JSON parsing or memory: the CLI materializes a plan before it calls the runtime.
+For auditable feedback, a capped API iterable can be read one candidate past
+the admission limit; that candidate is denied without policy evaluation,
+confirmation, or execution. Applications should bound side-effecting producers
+upstream.
+
+For compatibility, an unbudgeted batch retains dispatch through an embedding
+subclass's execution hooks. A budgeted batch rejects legacy `execute()` or
+`_execute()` overrides before consuming its iterable: budget reservation cannot
+safely bypass an application-owned approval or audit hook. Prefer composition
+through policy and executor implementations when a batch needs a budget.
 
 ### Local evidence, not a security boundary
 
@@ -128,7 +170,9 @@ that trusted configuration.
 
 Implement `Policy.evaluate(action)`. Return `None` when the policy does not
 apply. `PolicyEngine` gives deny decisions precedence over confirmation, and
-confirmation precedence over allow.
+confirmation precedence over allow. Each policy receives an independent
+canonical action snapshot; use the returned `PolicyOutcome`, not action-object
+mutation, to communicate with the engine or other policies.
 
 `SelectorAllowlistPolicy` is an opt-in example of target-scoped least
 privilege. It only handles `click` and `type`, compares a trusted locator
@@ -149,5 +193,7 @@ URL canonicalization; it is not a claim to solve homograph or DNS risks.
 - JSON Schema export for actions and policy outcomes.
 - Screenshot evidence associated with each trace step.
 - Sandboxed remote executors and explicit resource limits.
+- Explicit session-level budgets and resource accounting for deployments that
+  need a scope beyond one action batch.
 - BrowserGym/WebArena-compatible evaluation runners.
 - Signed policy bundles for shared deployments.

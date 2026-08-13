@@ -23,6 +23,8 @@ uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions and
   `aa schema action|plan`.
 - Optional exact `SelectorAllowlistPolicy` for least-privilege `click` and
   `type` target admission, while retaining confirmation on selector matches.
+- `ExecutionBudget` and matching CLI flags for trusted per-batch action-count
+  and cumulative-wait limits.
 
 ### Changed
 
@@ -44,6 +46,11 @@ uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions and
   writes as an audit failure instead of silently accepting a truncated JSONL
   event. Cooperating local trace writers serialize an event write and possible
   rollback so one recorder does not truncate another recorder's event.
+- Confirmation now accepts only the literal built-in `True`; other truthy
+  handler results fail closed as `cancelled`.
+- `PolicyEngine` gives each policy an isolated canonical action snapshot;
+  custom policies must return `PolicyOutcome` values rather than use action
+  mutation to communicate with later policies.
 
 ### Breaking changes
 
@@ -62,3 +69,16 @@ uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions and
   must set `allowed_request_methods` explicitly.
 - Existing applications that configure Unicode domain names must migrate to
   their intended ASCII Punycode A-labels.
+- Trace replay now fails closed unless every event is a complete unredacted
+  dry-run with explicit allow/confirm evidence; it must not turn a real prior
+  execution, failure, cancellation, denial, or budget block into a later
+  execution attempt.
+- A budgeted `execute_many()` now fails closed if an embedding subclass
+  overrides `execute()` or `_execute()`. Unbudgeted batches retain legacy
+  dispatch; compose custom policy or executor behavior for a budgeted batch.
+- The unoverridden base `ActionRuntime.execute()` and `execute_many()` accept
+  only exact `Action` objects and rebuild a canonical immutable snapshot.
+  Normalize integration input with `Action(...)` or `Action.from_dict(...)`;
+  duck-typed values and `Action` subclasses are now rejected before policy,
+  confirmation, recording, or execution. A direct `execute()` override remains
+  application-owned and must enforce its own boundary.

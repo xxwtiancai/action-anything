@@ -293,6 +293,7 @@ def action_plan_schema() -> dict[str, Any]:
                     }
                 },
                 "additionalProperties": True,
+                "not": {"required": ["budget"]},
             },
         ],
         "$defs": _definitions(),
