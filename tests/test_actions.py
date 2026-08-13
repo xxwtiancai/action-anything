@@ -1,8 +1,13 @@
 import unittest
 import traceback
+from collections.abc import Mapping
 
 from actionanything import Action, ActionKind, ActionResult, ResultStatus, RiskLevel
-from actionanything.actions import ActionValidationError, MAX_METADATA_NESTING
+from actionanything.actions import (
+    ActionValidationError,
+    MAX_METADATA_NESTING,
+    MAX_RESULT_OUTPUT_NESTING,
+)
 
 
 class DivergentText(str):
@@ -306,6 +311,61 @@ class ActionTests(unittest.TestCase):
             with self.subTest(build=build):
                 with self.assertRaisesRegex(ActionValidationError, "must not exceed"):
                     build()
+
+    def test_result_output_has_a_stable_container_nesting_limit(self) -> None:
+        accepted: object = "leaf"
+        for _ in range(MAX_RESULT_OUTPUT_NESTING):
+            accepted = {"child": accepted}
+        result = ActionResult("result-1", ResultStatus.DRY_RUN, output=accepted)
+        cursor: object = result.output
+        for _ in range(MAX_RESULT_OUTPUT_NESTING):
+            self.assertIsInstance(cursor, Mapping)
+            cursor = cursor["child"]  # type: ignore[index]
+        self.assertEqual(cursor, "leaf")
+
+        # The root mapping counts too: 1 mapping plus 63 alternating
+        # list/tuple containers remains within the same total-container cap.
+        mixed: object = "leaf"
+        for index in range(MAX_RESULT_OUTPUT_NESTING - 1):
+            mixed = [mixed] if index % 2 else (mixed,)
+        mixed_result = ActionResult(
+            "result-1", ResultStatus.DRY_RUN, output={"child": mixed}
+        )
+        mixed_cursor: object = mixed_result.output["child"]
+        for _ in range(MAX_RESULT_OUTPUT_NESTING - 1):
+            self.assertIsInstance(mixed_cursor, tuple)
+            mixed_cursor = mixed_cursor[0]  # type: ignore[index]
+        self.assertEqual(mixed_cursor, "leaf")
+
+        rejected: object = "leaf"
+        for _ in range(MAX_RESULT_OUTPUT_NESTING + 1):
+            rejected = {"child": rejected}
+        with self.assertRaisesRegex(ActionValidationError, "must not exceed"):
+            ActionResult("result-1", ResultStatus.DRY_RUN, output=rejected)
+
+    def test_result_output_rejects_cycles_and_preserves_shared_children(self) -> None:
+        direct_cycle: dict[str, object] = {}
+        direct_cycle["self"] = direct_cycle
+        indirect_cycle: dict[str, object] = {}
+        children: list[object] = []
+        children.append((indirect_cycle,))
+        indirect_cycle["children"] = children
+
+        for output in (direct_cycle, indirect_cycle):
+            with self.subTest(output=output):
+                with self.assertRaisesRegex(
+                    ActionValidationError, "circular references"
+                ):
+                    ActionResult("result-1", ResultStatus.DRY_RUN, output=output)
+
+        shared = {"source": "executor"}
+        result = ActionResult(
+            "result-1",
+            ResultStatus.DRY_RUN,
+            output={"first": shared, "second": shared},
+        )
+        self.assertEqual(result.output["first"], {"source": "executor"})
+        self.assertEqual(result.output["second"], {"source": "executor"})
 
     def test_schema_errors_do_not_reflect_untrusted_values_or_nested_keys(self) -> None:
         sentinel = "untrusted-schema-diagnostic-" + ("x" * 4_096)

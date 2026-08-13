@@ -466,6 +466,29 @@ class RuntimeTests(unittest.TestCase):
         self.assertIs(result.status, ResultStatus.ERROR)
         self.assertEqual(result.error, "executor failed")
 
+    def test_executor_output_cycles_fail_closed_and_remain_traceable(self) -> None:
+        class CyclicOutputExecutor:
+            is_dry_run = False
+
+            def execute(self, action: Action):
+                output: dict[str, object] = {}
+                output["self"] = output
+                return output
+
+        with tempfile.TemporaryDirectory() as directory:
+            trace = Path(directory) / "trace.jsonl"
+            result = ActionRuntime(
+                CyclicOutputExecutor(),
+                recorder=TraceRecorder(trace, redact=False),
+            ).execute(Action(ActionKind.WAIT, {"milliseconds": 1}))
+            event = next(read_trace(trace))
+
+        self.assertIs(result.status, ResultStatus.ERROR)
+        self.assertEqual(result.error, "executor failed")
+        self.assertEqual(result.output, {})
+        self.assertEqual(event["result"]["status"], ResultStatus.ERROR.value)
+        self.assertEqual(event["result"]["output"], {})
+
     def test_executor_error_does_not_reflect_exception_text(self) -> None:
         result = ActionRuntime(SecretFailingExecutor(), confirm=lambda *_: True).execute(
             Action(ActionKind.CLICK, {"selector": "button"})
