@@ -18,6 +18,8 @@ uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions and
   and cumulative-wait limits.
 - A bounded, cycle-checked `Action.metadata` intake boundary and short,
   non-reflective diagnostics for malformed action-plan fields and values.
+- A bounded, cycle-checked `ActionResult.output` normalization boundary for
+  executor results.
 
 ### Changed
 
@@ -37,6 +39,10 @@ uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions and
   after intake.
 - `Action.metadata` accepts at most 64 nested mapping/list/tuple containers
   and rejects circular references before an action reaches policy or execution.
+- Canonically constructed `ActionResult.output` now accepts at most 64
+  mapping/list/tuple containers in total, including the root, and rejects
+  circular references. The base runtime applies this before recording executor
+  results.
 
 ### Breaking changes
 

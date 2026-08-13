@@ -59,6 +59,10 @@ MAX_SCROLL_DELTA = 10_000
 MAX_WAIT_MILLISECONDS = 60_000
 MAX_SCREENSHOT_PATH_LENGTH = 240
 MAX_METADATA_NESTING = 64
+# Executor results cross the same serialization and trace boundary as action
+# metadata. Keep their recursive shape bounded independently so a custom
+# executor cannot make direct result construction recurse without limit.
+MAX_RESULT_OUTPUT_NESTING = MAX_METADATA_NESTING
 
 
 # A proposal can raise its risk, but cannot lower the baseline set by trusted
@@ -531,7 +535,11 @@ class ActionResult:
             raise ValueError("unsupported result status") from None
         if not isinstance(self.output, Mapping):
             raise TypeError("result output must be a mapping")
-        output = _freeze_json(self.output, "output")
+        output = _freeze_json(
+            self.output,
+            "output",
+            maximum_nesting=MAX_RESULT_OUTPUT_NESTING,
+        )
         if self.error is not None:
             try:
                 error = _string(self.error, "result error")
