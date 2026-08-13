@@ -170,6 +170,28 @@ executor domain boundary.
 - Action plans may be a bare list or an object with an `actions` list. The
   object envelope may carry application-owned metadata, but those fields never
   configure policy or execution authority in the CLI.
+- The real Playwright executor permits only `GET` network requests by default.
+  Programmatic users must explicitly allow every additional HTTP method; this
+  constrains browser egress but does not prove that a `GET` has no business
+  side effect.
+
+For a reviewed workflow that genuinely needs a write request, configure only
+the methods it needs in application code; the CLI deliberately keeps its
+default `GET`-only boundary:
+
+```python
+from actionanything.executors import PlaywrightExecutor
+
+executor = PlaywrightExecutor(
+    allowed_domains=["example.com"],
+    allowed_request_methods={"GET", "POST"},
+)
+```
+
+The configurable set is `GET`, `HEAD`, `OPTIONS`, `POST`, `PUT`, `PATCH`, and
+`DELETE`; `CONNECT` and `TRACE` are always rejected. A cross-origin request may
+also need an explicit `OPTIONS` grant for its browser preflight. Treat every
+such grant as trusted application configuration, not action-plan data.
 
 ## Architecture and contributing
 

@@ -78,13 +78,32 @@ class FakePage:
 
 
 class FakeRequest:
-    def __init__(self, url):
+    def __init__(self, url, method="GET"):
         self.url = url
+        self.method = method
+
+
+class ExplodingRequest:
+    @property
+    def method(self):
+        raise RuntimeError("untrusted request property")
+
+    @property
+    def url(self):
+        raise RuntimeError("untrusted request property")
+
+
+class ExplodingUrlRequest:
+    method = "GET"
+
+    @property
+    def url(self):
+        raise RuntimeError("untrusted request property")
 
 
 class FakeRoute:
-    def __init__(self, url):
-        self.request = FakeRequest(url)
+    def __init__(self, url, method="GET"):
+        self.request = FakeRequest(url, method)
         self.events = []
 
     def abort(self, reason):
@@ -256,6 +275,59 @@ class PlaywrightExecutorTests(unittest.TestCase):
                 executor._route_request(route)
                 self.assertEqual(route.events, [("abort", "blockedbyclient")])
 
+    def test_request_routing_defaults_to_passive_methods(self) -> None:
+        executor = self._executor(FakePage())
+
+        route = FakeRoute("https://example.com/resource", "GET")
+        executor._route_request(route)
+        self.assertEqual(route.events, [("continue",)])
+
+        for method in ("HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE", "CONNECT"):
+            with self.subTest(method=method):
+                route = FakeRoute("https://example.com/resource", method)
+                executor._route_request(route)
+                self.assertEqual(route.events, [("abort", "blockedbyclient")])
+
+    def test_request_routing_allows_only_explicitly_configured_methods(self) -> None:
+        executor = PlaywrightExecutor(
+            allowed_domains=["example.com"],
+            allowed_request_methods={"GET", "HEAD", "POST"},
+        )
+        self.assertEqual(executor.allowed_request_methods, frozenset({"GET", "HEAD", "POST"}))
+
+        for method, expected in (
+            ("GET", "continue"),
+            ("HEAD", "continue"),
+            ("POST", "continue"),
+            ("DELETE", "abort"),
+        ):
+            with self.subTest(method=method):
+                route = FakeRoute("https://example.com/resource", method)
+                executor._route_request(route)
+                self.assertEqual(route.events[0][0], expected)
+
+        off_domain = FakeRoute("https://evil.test/resource", "POST")
+        executor._route_request(off_domain)
+        self.assertEqual(off_domain.events, [("abort", "blockedbyclient")])
+
+    def test_request_routing_fails_closed_for_invalid_request_methods(self) -> None:
+        executor = self._executor(FakePage())
+        for method in (None, "", "get", " GET", ["GET"], {"method": "GET"}):
+            with self.subTest(method=method):
+                route = FakeRoute("https://example.com/resource", method)
+                executor._route_request(route)
+                self.assertEqual(route.events, [("abort", "blockedbyclient")])
+
+        route = FakeRoute("https://example.com/resource")
+        route.request = ExplodingRequest()
+        executor._route_request(route)
+        self.assertEqual(route.events, [("abort", "blockedbyclient")])
+
+        route = FakeRoute("https://example.com/resource")
+        route.request = ExplodingUrlRequest()
+        executor._route_request(route)
+        self.assertEqual(route.events, [("abort", "blockedbyclient")])
+
     def test_start_blocks_workers_downloads_and_popups(self) -> None:
         context = FakeContext()
         browser = FakeBrowser(context)
@@ -367,6 +439,49 @@ class PlaywrightExecutorTests(unittest.TestCase):
     def test_executor_requires_allowlist(self) -> None:
         with self.assertRaisesRegex(ValueError, "requires at least one allowed domain"):
             PlaywrightExecutor()
+
+    def test_executor_validates_trusted_request_method_configuration(self) -> None:
+        invalid_values = (
+            "GET",
+            b"GET",
+            {"GET": True},
+            None,
+            1,
+            ("GET", " TRACE"),
+            ("GET", "GET\nPOST"),
+            ("GET", "get"),
+            ("GET", "GÉT"),
+            ("GET", "TRACE"),
+            ("GET", "CONNECT"),
+            ("GET", "UNKNOWN"),
+            ("GET", 1),
+            ("GET", " "),
+        )
+        for methods in invalid_values:
+            with self.subTest(methods=methods):
+                with self.assertRaises(ValueError):
+                    PlaywrightExecutor(
+                        allowed_domains=["example.com"],
+                        allowed_request_methods=methods,
+                    )
+
+        source = ["GET"]
+        executor = PlaywrightExecutor(
+            allowed_domains=["example.com"],
+            allowed_request_methods=source,
+        )
+        source.append("POST")
+        self.assertEqual(executor.allowed_request_methods, frozenset({"GET"}))
+        with self.assertRaises(AttributeError):
+            executor.allowed_request_methods = frozenset({"GET", "POST"})
+
+        deny_all = PlaywrightExecutor(
+            allowed_domains=["example.com"],
+            allowed_request_methods=(),
+        )
+        route = FakeRoute("https://example.com/resource", "GET")
+        deny_all._route_request(route)
+        self.assertEqual(route.events, [("abort", "blockedbyclient")])
 
 
 if __name__ == "__main__":

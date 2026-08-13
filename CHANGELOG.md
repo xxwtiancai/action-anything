@@ -26,6 +26,10 @@ uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions and
 
 ### Changed
 
+- `PlaywrightExecutor` now permits only `GET` browser requests by default.
+  Applications enabling real execution must explicitly configure every
+  additional HTTP method they require.
+
 - The standard policy now requires an explicit domain allowlist for all
   navigation, including dry-run, and confirms `click`/`type` at the reversible
   risk floor.
@@ -47,5 +51,7 @@ uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions and
   application-owned confirmation handler or an explicitly reviewed custom
   policy.
 - `PlaywrightExecutor` now requires a non-empty `allowed_domains` allowlist,
-  and default trace JSONL intentionally cannot be replayed; use an explicit,
-  local `--unsafe-trace` test trace for replay.
+  defaults to `GET` browser requests, and default trace JSONL intentionally
+  cannot be replayed; use an explicit, local `--unsafe-trace` test trace for
+  replay. Applications needing `HEAD`, `OPTIONS`, or write-capable methods
+  must set `allowed_request_methods` explicitly.
