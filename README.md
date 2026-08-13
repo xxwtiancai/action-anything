@@ -91,9 +91,11 @@ allowlisting, or executor containment. In particular, a model-provided
 
 Some runtime rules are intentionally stricter than portable JSON Schema. For
 example, Python validation distinguishes an integer JSON token from `1.0` for
-bounded integer fields, and performs full URL and artifact-path parsing. Send
-all accepted output through `Action.from_dict()` or `Action(...)` before it is
-evaluated or executed.
+bounded integer fields, performs full URL and artifact-path parsing, and
+limits action metadata to 64 mapping/list/tuple containers with no circular
+references. This is a runtime recursion boundary, not a general plan-size or
+key-count quota. Send all accepted output through `Action.from_dict()` or
+`Action(...)` before it is evaluated or executed.
 
 ## Provider adapters
 

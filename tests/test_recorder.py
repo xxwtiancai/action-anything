@@ -49,22 +49,15 @@ class TraceRedactionTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "invalid result"):
                 list(read_trace(invalid_result))
 
-    def test_unsafe_trace_writer_rejects_events_its_reader_would_reject(self) -> None:
+    def test_action_intake_rejects_metadata_its_trace_reader_would_reject(self) -> None:
         metadata: dict[str, object] = {}
         cursor = metadata
         for _ in range(200):
             child: dict[str, object] = {}
             cursor["child"] = child
             cursor = child
-        action = Action(ActionKind.WAIT, {"milliseconds": 1}, metadata=metadata)
-        outcome = PolicyOutcome(Decision.ALLOW, "test", "test")
-        result = ActionResult(action.id, ResultStatus.DRY_RUN)
-
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "trace.jsonl"
-            with self.assertRaisesRegex(ValueError, "nested too deeply"):
-                TraceRecorder(path, redact=False).record(action, outcome, result)
-            self.assertFalse(path.exists())
+        with self.assertRaisesRegex(ValueError, "nested containers"):
+            Action(ActionKind.WAIT, {"milliseconds": 1}, metadata=metadata)
 
     def test_redact_value_handles_nested_url_suffixes_and_sensitive_keys(self) -> None:
         secret = "nested-secret"

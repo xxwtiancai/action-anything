@@ -19,6 +19,7 @@ from actionanything import (
     read_trace,
 )
 from actionanything.cli import main
+from actionanything.actions import MAX_METADATA_NESTING
 from actionanything.policy import PolicyOutcome
 
 
@@ -107,6 +108,47 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(code, 2)
         self.assertIn("action plans must not set budget", errors)
+
+    def test_validate_rejects_excessively_nested_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            plan = Path(directory) / "nested.json"
+            metadata: dict[str, object] = {}
+            cursor = metadata
+            for _ in range(MAX_METADATA_NESTING + 1):
+                child: dict[str, object] = {}
+                cursor["child"] = child
+                cursor = child
+            plan.write_text(
+                json.dumps(
+                    {
+                        "actions": [
+                            {
+                                "kind": "click",
+                                "params": {"selector": "#x"},
+                                "metadata": metadata,
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            code, _, errors = self._main(["validate", str(plan)])
+
+        self.assertEqual(code, 2)
+        self.assertIn("invalid action at index 0", errors)
+        self.assertIn("nested containers", errors)
+        self.assertNotIn("RecursionError", errors)
+
+    def test_validate_normalizes_deep_json_decoder_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            plan = Path(directory) / "decoder-nested.json"
+            plan.write_text("[]", encoding="utf-8")
+            with patch("actionanything.cli.json.load", side_effect=RecursionError):
+                code, _, errors = self._main(["validate", str(plan)])
+
+        self.assertEqual(code, 2)
+        self.assertIn("action plan is nested too deeply", errors)
+        self.assertNotIn("RecursionError", errors)
 
     def test_run_rejects_plan_budget_but_preserves_other_envelope_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -58,6 +58,7 @@ MAX_COORDINATE = 100_000
 MAX_SCROLL_DELTA = 10_000
 MAX_WAIT_MILLISECONDS = 60_000
 MAX_SCREENSHOT_PATH_LENGTH = 240
+MAX_METADATA_NESTING = 64
 
 
 # A proposal can raise its risk, but cannot lower the baseline set by trusted
@@ -87,8 +88,21 @@ def _require_mapping(value: Any, field_name: str) -> Mapping[str, Any]:
     return value
 
 
-def _freeze_json(value: Any, field_name: str) -> Any:
-    """Validate JSON-compatible data and return an immutable deep copy."""
+def _freeze_json(
+    value: Any,
+    field_name: str,
+    *,
+    maximum_nesting: int | None = None,
+    nesting: int = 0,
+    ancestor_ids: set[int] | None = None,
+) -> Any:
+    """Validate JSON-compatible data and return an immutable deep copy.
+
+    ``maximum_nesting`` is used for untrusted metadata, whose shape is not
+    otherwise constrained by an action kind.  It also enables cycle detection
+    for that recursive input boundary.  Other internal uses retain their
+    existing structural behavior.
+    """
 
     if value is None or isinstance(value, (str, bool, int)):
         return value
@@ -97,19 +111,50 @@ def _freeze_json(value: Any, field_name: str) -> Any:
             raise _error(f"{field_name} must not contain non-finite numbers")
         return value
     if isinstance(value, Mapping):
-        mapping = _require_mapping(value, field_name)
-        return MappingProxyType(
-            {
-                key: _freeze_json(item, f"{field_name}.{key}")
-                for key, item in mapping.items()
-            }
+        container: Mapping[str, Any] | list[Any] | tuple[Any, ...] = _require_mapping(
+            value, field_name
         )
-    if isinstance(value, (list, tuple)):
+    elif isinstance(value, (list, tuple)):
+        container = value
+    else:
+        raise _error(f"{field_name} must contain JSON-compatible values")
+
+    active_ancestors: set[int] | None = None
+    if maximum_nesting is not None:
+        if nesting >= maximum_nesting:
+            raise _error(f"{field_name} must not exceed {maximum_nesting} nested containers")
+        active_ancestors = ancestor_ids if ancestor_ids is not None else set()
+        identity = id(container)
+        if identity in active_ancestors:
+            raise _error(f"{field_name} must not contain circular references")
+        active_ancestors.add(identity)
+    try:
+        if isinstance(container, Mapping):
+            return MappingProxyType(
+                {
+                    key: _freeze_json(
+                        item,
+                        f"{field_name}.{key}",
+                        maximum_nesting=maximum_nesting,
+                        nesting=nesting + 1,
+                        ancestor_ids=active_ancestors,
+                    )
+                    for key, item in container.items()
+                }
+            )
         return tuple(
-            _freeze_json(item, f"{field_name}[{index}]")
-            for index, item in enumerate(value)
+            _freeze_json(
+                item,
+                f"{field_name}[{index}]",
+                maximum_nesting=maximum_nesting,
+                nesting=nesting + 1,
+                ancestor_ids=active_ancestors,
+            )
+            for index, item in enumerate(container)
         )
-    raise _error(f"{field_name} must contain JSON-compatible values")
+    finally:
+        if active_ancestors is not None:
+            active_ancestors.remove(id(container))
 
 
 def _thaw_json(value: Any) -> Any:
@@ -349,7 +394,11 @@ class Action:
         kind = _coerce_kind(self.kind)
         declared_risk = _coerce_risk(self.risk)
         normalized_params = _validate_params(kind, self.params)
-        metadata = _freeze_json(_require_mapping(self.metadata, "action metadata"), "metadata")
+        metadata = _freeze_json(
+            _require_mapping(self.metadata, "action metadata"),
+            "metadata",
+            maximum_nesting=MAX_METADATA_NESTING,
+        )
 
         object.__setattr__(self, "kind", kind)
         object.__setattr__(self, "risk", RiskLevel(max(declared_risk, MINIMUM_RISK[kind])))
