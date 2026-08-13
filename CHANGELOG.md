@@ -54,6 +54,8 @@ uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions and
 - `PolicyEngine` gives each policy an isolated canonical action snapshot;
   custom policies must return `PolicyOutcome` values rather than use action
   mutation to communicate with later policies.
+- Action-intake diagnostics no longer reflect unsupported action field names,
+  parameter names, enum values, or result statuses supplied by untrusted data.
 
 ### Breaking changes
 

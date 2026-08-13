@@ -1,6 +1,6 @@
 import unittest
 
-from actionanything import Action, ActionKind, RiskLevel
+from actionanything import Action, ActionKind, ActionResult, RiskLevel
 from actionanything.actions import ActionValidationError, MAX_METADATA_NESTING
 
 
@@ -54,7 +54,7 @@ class ActionTests(unittest.TestCase):
                     Action(ActionKind.NAVIGATE, {"url": url})
 
     def test_unknown_action_parameter_is_rejected(self) -> None:
-        with self.assertRaisesRegex(ActionValidationError, "does not support"):
+        with self.assertRaisesRegex(ActionValidationError, "unsupported parameters"):
             Action(ActionKind.CLICK, {"selector": "#submit", "force": True})
 
     def test_type_and_bounded_values_are_validated(self) -> None:
@@ -159,6 +159,62 @@ class ActionTests(unittest.TestCase):
             Action.from_dict(
                 {"kind": "click", "params": {"selector": "#x"}, "extra": True}
             )
+
+    def test_untrusted_input_is_not_reflected_in_validation_errors(self) -> None:
+        sentinel = "untrusted-action-diagnostic-" + ("x" * 4_096)
+        invalid_inputs = (
+            lambda: Action.from_dict(
+                {"kind": "click", "params": {"selector": "#x"}, sentinel: True}
+            ),
+            lambda: Action(ActionKind.CLICK, {"selector": "#x", sentinel: True}),
+            lambda: Action.from_dict({"kind": sentinel, "params": {}}),
+            lambda: Action.from_dict(
+                {
+                    "kind": "wait",
+                    "params": {"milliseconds": 1},
+                    "risk": sentinel,
+                }
+            ),
+            lambda: Action.from_dict(
+                {
+                    "kind": "wait",
+                    "params": {"milliseconds": 1},
+                    "risk": 10**2_000,
+                }
+            ),
+            lambda: ActionResult("result-1", sentinel),
+        )
+
+        for build in invalid_inputs:
+            with self.subTest(build=build):
+                with self.assertRaises((ActionValidationError, ValueError)) as context:
+                    build()
+                message = str(context.exception)
+                self.assertNotIn(sentinel, message)
+                self.assertLessEqual(len(message), 128)
+
+    def test_nested_untrusted_keys_are_not_reflected_in_validation_errors(self) -> None:
+        sentinel = "nested-diagnostic-" + ("x" * 4_096)
+        invalid_inputs = (
+            lambda: Action(
+                ActionKind.WAIT,
+                {"milliseconds": 1},
+                metadata={sentinel: float("nan")},
+            ),
+            lambda: ActionResult(
+                "result-1",
+                "dry_run",
+                output={sentinel: float("nan")},
+            ),
+        )
+
+        for build in invalid_inputs:
+            with self.subTest(build=build):
+                with self.assertRaises((ActionValidationError, ValueError)) as context:
+                    build()
+                message = str(context.exception)
+                self.assertNotIn(sentinel, message)
+                self.assertLessEqual(len(message), 128)
 
 
 if __name__ == "__main__":

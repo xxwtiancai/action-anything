@@ -134,7 +134,7 @@ def _freeze_json(
                 {
                     key: _freeze_json(
                         item,
-                        f"{field_name}.{key}",
+                        f"{field_name} value",
                         maximum_nesting=maximum_nesting,
                         nesting=nesting + 1,
                         ancestor_ids=active_ancestors,
@@ -145,7 +145,7 @@ def _freeze_json(
         return tuple(
             _freeze_json(
                 item,
-                f"{field_name}[{index}]",
+                f"{field_name} value",
                 maximum_nesting=maximum_nesting,
                 nesting=nesting + 1,
                 ancestor_ids=active_ancestors,
@@ -170,10 +170,8 @@ def _thaw_json(value: Any) -> Any:
 def _require_known_keys(
     params: Mapping[str, Any], allowed: set[str], kind: ActionKind
 ) -> None:
-    unknown = sorted(set(params).difference(allowed))
-    if unknown:
-        joined = ", ".join(repr(key) for key in unknown)
-        raise _error(f"{kind.value} does not support parameter(s): {joined}")
+    if any(key not in allowed for key in params):
+        raise _error(f"{kind.value} contains unsupported parameters")
 
 
 def _non_empty_string(value: Any, name: str, maximum: int | None = None) -> str:
@@ -348,7 +346,7 @@ def _validate_params(kind: ActionKind, raw_params: Mapping[str, Any]) -> dict[st
             normalized["full_page"] = params["full_page"]
         return normalized
 
-    raise _error(f"unsupported action kind: {kind!r}")
+    raise _error("unsupported action kind")
 
 
 def _coerce_kind(value: Any) -> ActionKind:
@@ -358,8 +356,8 @@ def _coerce_kind(value: Any) -> ActionKind:
         raise _error("action kind must be an ActionKind or string")
     try:
         return ActionKind(value)
-    except ValueError as exc:
-        raise _error(f"unsupported action kind: {value!r}") from exc
+    except ValueError:
+        raise _error("unsupported action kind") from None
 
 
 def _coerce_risk(value: Any) -> RiskLevel:
@@ -367,8 +365,8 @@ def _coerce_risk(value: Any) -> RiskLevel:
         raise _error("action risk must be an integer RiskLevel")
     try:
         return RiskLevel(value)
-    except ValueError as exc:
-        raise _error(f"unsupported action risk: {value!r}") from exc
+    except ValueError:
+        raise _error("unsupported action risk") from None
 
 
 @dataclass(frozen=True)
@@ -411,10 +409,8 @@ class Action:
 
         payload = _require_mapping(payload, "action payload")
         allowed = {"id", "kind", "params", "risk", "metadata"}
-        unknown = sorted(set(payload).difference(allowed))
-        if unknown:
-            joined = ", ".join(repr(key) for key in unknown)
-            raise _error(f"action payload has unsupported field(s): {joined}")
+        if any(key not in allowed for key in payload):
+            raise _error("action payload contains unsupported fields")
         if "kind" not in payload:
             raise _error("action payload requires 'kind'")
         action_id = payload.get("id", uuid4().hex)
@@ -453,8 +449,8 @@ class ActionResult:
             raise ValueError("result action_id must be a non-empty string")
         try:
             status = ResultStatus(self.status)
-        except ValueError as exc:
-            raise ValueError(f"unsupported result status: {self.status!r}") from exc
+        except ValueError:
+            raise ValueError("unsupported result status") from None
         output = _freeze_json(_require_mapping(self.output, "result output"), "output")
         if self.error is not None and not isinstance(self.error, str):
             raise TypeError("result error must be a string or None")
