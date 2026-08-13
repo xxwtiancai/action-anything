@@ -53,9 +53,33 @@ jobs:
       - name: Check installed dependencies
         run: python -m pip check
 
+  windows-recorder-runtime:
+    name: Windows recorder/runtime (Python 3.10)
+    runs-on: windows-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+          cache: pip
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+      - name: Run recorder and runtime tests
+        run: python -m unittest -v tests.test_recorder tests.test_runtime
+      - name: Check installed dependencies
+        run: python -m pip check
+
   build:
     name: Build distributions
-    needs: test
+    needs: [test, windows-recorder-runtime]
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
