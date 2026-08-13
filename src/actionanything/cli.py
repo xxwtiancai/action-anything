@@ -13,6 +13,7 @@ from .executors import DryRunExecutor, PlaywrightExecutor
 from .policy import PolicyEngine, PolicyOutcome
 from .recorder import TraceRecorder, contains_redaction, read_trace
 from .runtime import ActionRuntime
+from .schemas import action_plan_schema, action_schema
 
 
 def _load_actions(path: str | Path) -> list[Action]:
@@ -91,6 +92,14 @@ def _validate(args: argparse.Namespace) -> int:
             indent=2,
         )
     )
+    return 0
+
+
+def _schema(args: argparse.Namespace) -> int:
+    """Print a versioned, self-contained JSON Schema document."""
+
+    document = action_schema() if args.document == "action" else action_plan_schema()
+    print(json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 
 
@@ -185,6 +194,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     validate.add_argument("plan", help="path to a JSON action plan")
     validate.set_defaults(handler=_validate)
+
+    schema = subparsers.add_parser(
+        "schema", help="print a versioned JSON Schema for structured output"
+    )
+    schema.add_argument("document", choices=("action", "plan"))
+    schema.set_defaults(handler=_schema)
 
     inspect = subparsers.add_parser("inspect", help="summarize a JSONL trace")
     inspect.add_argument("trace")

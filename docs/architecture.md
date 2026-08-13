@@ -58,11 +58,27 @@ policy text, errors, and artifact paths are redacted unless the user explicitly
 opts into an unsafe local test trace. JSONL append behavior does not make traces
 tamper-proof, safe to publish, or a substitute for secret management.
 
+### Versioned interchange contracts
+
+`action_schema()` and `action_plan_schema()` export self-contained JSON Schema
+Draft 2020-12 documents with stable v1 URN identifiers. They are intended for
+structured model output, form generators, and offline interoperability; they
+are emitted locally and do not fetch remote schema references. Each public call
+returns a new JSON-compatible mapping so an embedding application can annotate
+or transform it without changing future exports.
+
+These contracts intentionally describe only structural input shape. Canonical
+`Action` validation remains authoritative for URL and filesystem semantics,
+finite values, Python's integer-token distinction (for example `1` versus
+`1.0`), and minimum-risk normalization. Policy, confirmation, domain
+allowlisting, and executor controls remain separate runtime boundaries.
+
 ## Core modules
 
 | Module | Responsibility |
 |---|---|
 | `actions.py` | Stable action, risk, and result schemas |
+| `schemas.py` | Versioned JSON Schema exports for action and action-plan inputs |
 | `adapters/` | Provider-output normalizers; no model calls or credentials |
 | `policy.py` | Composable allow, confirm, and deny decisions |
 | `executors.py` | Dry-run and optional Playwright execution |
@@ -95,7 +111,7 @@ confirmation precedence over allow.
 ## Near-term roadmap
 
 - Additional adapters for documented computer-use model outputs.
-- JSON Schema export for actions and policy outcomes.
+- JSON Schema export for policy outcomes.
 - Screenshot evidence associated with each trace step.
 - Sandboxed remote executors and explicit resource limits.
 - BrowserGym/WebArena-compatible evaluation runners.

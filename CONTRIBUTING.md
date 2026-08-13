@@ -9,15 +9,16 @@ git clone https://github.com/xxwtiancai/action-anything.git
 cd action-anything
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e .
+python -m pip install -e '.[dev]'
 python -m unittest discover -s tests -v
 ```
 
-The core package has no runtime dependencies. Install the optional browser extra
-only when working on the Playwright executor:
+The core package has no runtime dependencies. The ``dev`` extra installs the
+Draft 2020-12 validator used by the schema-contract tests. Install the optional
+browser extra only when working on the Playwright executor:
 
 ```bash
-python -m pip install -e '.[browser]'
+python -m pip install -e '.[dev,browser]'
 playwright install chromium
 ```
 

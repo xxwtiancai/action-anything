@@ -25,6 +25,7 @@ classifiers = [
 
 [project.optional-dependencies]
 browser = ["playwright>=1.50,<2"]
+dev = ["jsonschema>=4.23,<5"]
 
 [project.scripts]
 aa = "actionanything.cli:main"
@@ -36,4 +37,3 @@ Issues = "https://github.com/xxwtiancai/action-anything/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-

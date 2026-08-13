@@ -17,7 +17,8 @@ profiles, and deployment isolation.
 - Human confirmation for actions that the configured policy gates.
 - A zero-dependency dry-run executor and an optional Playwright browser executor.
 - Redacted JSONL traces plus trace inspection and replay for local test data.
-- A small `aa` CLI for running portable JSON action plans.
+- A small `aa` CLI for running portable JSON action plans and exporting their
+  machine-readable contracts.
 
 ## Quick start
 
@@ -61,6 +62,37 @@ result = runtime.execute(
 print(result.to_dict())
 ```
 
+## Use structured output contracts
+
+ActionAnything exports self-contained, versioned [JSON Schema Draft
+2020-12](https://json-schema.org/draft/2020-12) documents for model structured
+output, form generation, and offline input checks:
+
+```bash
+aa schema action > actionanything-action-v1.schema.json
+aa schema plan > actionanything-plan-v1.schema.json
+```
+
+The Python API returns a fresh JSON-serializable document on every call:
+
+```python
+from actionanything import action_plan_schema, action_schema
+
+one_action_contract = action_schema()
+portable_plan_contract = action_plan_schema()
+```
+
+The schemas describe input shape only. They do not replace canonical `Action`
+validation, risk floors, policy evaluation, human confirmation, domain
+allowlisting, or executor containment. In particular, a model-provided
+`risk` is never an authority to lower the runtime's minimum risk.
+
+Some runtime rules are intentionally stricter than portable JSON Schema. For
+example, Python validation distinguishes an integer JSON token from `1.0` for
+bounded integer fields, and performs full URL and artifact-path parsing. Send
+all accepted output through `Action.from_dict()` or `Action(...)` before it is
+evaluated or executed.
+
 ## Safety defaults
 
 - Actions run through deterministic policies before reaching an executor.
@@ -75,6 +107,9 @@ print(result.to_dict())
 - The CLI defaults to dry-run. It can validate and record a plan without a
   browser, while real execution is opt-in and requires at least one
   `--allowed-domain`.
+- Action plans may be a bare list or an object with an `actions` list. The
+  object envelope may carry application-owned metadata, but those fields never
+  configure policy or execution authority in the CLI.
 
 ## Architecture and contributing
 

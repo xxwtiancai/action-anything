@@ -5,7 +5,15 @@ from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 
-from actionanything import Action, ActionKind, Decision, DryRunExecutor, TraceRecorder
+from actionanything import (
+    Action,
+    ActionKind,
+    Decision,
+    DryRunExecutor,
+    TraceRecorder,
+    action_plan_schema,
+    action_schema,
+)
 from actionanything.cli import main
 from actionanything.policy import PolicyOutcome
 
@@ -67,6 +75,17 @@ class CliTests(unittest.TestCase):
             code, _, errors = self._main(["validate", str(plan)])
             self.assertEqual(code, 2)
             self.assertIn("invalid action at index 0", errors)
+
+    def test_schema_command_prints_public_contracts(self) -> None:
+        action_code, action_output, action_errors = self._main(["schema", "action"])
+        plan_code, plan_output, plan_errors = self._main(["schema", "plan"])
+
+        self.assertEqual(action_code, 0)
+        self.assertEqual(plan_code, 0)
+        self.assertEqual(action_errors, "")
+        self.assertEqual(plan_errors, "")
+        self.assertEqual(json.loads(action_output), action_schema())
+        self.assertEqual(json.loads(plan_output), action_plan_schema())
 
     def test_real_execution_requires_domain_allowlist(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

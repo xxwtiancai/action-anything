@@ -12,12 +12,15 @@ from .executors import DryRunExecutor, ExecutorSafetyError, PlaywrightExecutor
 from .policy import Decision, PolicyEngine, PolicyOutcome
 from .recorder import TraceRecorder, read_trace
 from .runtime import ActionRuntime
+from .schemas import action_plan_schema, action_schema
 
 __all__ = [
     "Action",
     "ActionKind",
     "ActionResult",
     "ActionValidationError",
+    "action_plan_schema",
+    "action_schema",
     "ActionRuntime",
     "Decision",
     "DryRunExecutor",
