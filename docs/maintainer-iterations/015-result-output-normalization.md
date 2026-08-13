@@ -1,7 +1,7 @@
 # Iteration 015: Bounded executor result output
 
-**Status: implementation, local validation, staged-format verification, and
-independent review complete; remote CI pending.**
+**Status: implementation, local validation, staged-format verification,
+independent review, and remote CI complete.**
 This is an Agentic Harness Engineering (AHE) maintenance record for
 ActionAnything; it does not add an Agent Harness product feature.
 
@@ -55,6 +55,10 @@ Using the repository's bundled Python 3.12 runtime:
   action/runtime/recorder tests, confirmed the base-runtime behavior, and
   required the documentation to distinguish it from direct `TraceRecorder`
   use.
+- The manually dispatched [CI workflow](https://github.com/xxwtiancai/action-anything/actions/runs/31658636020)
+  passed on Python 3.10, 3.11, 3.12, and 3.13, including source compilation,
+  the complete suite, dependency checks, distribution build/metadata checks,
+  and wheel-install validation.
 
 ## Residual risks and next question
 
