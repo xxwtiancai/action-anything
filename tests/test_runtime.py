@@ -126,6 +126,11 @@ class SwitchText(str):
         return "x" * 60_000
 
 
+class UnderstatedRisk(int):
+    def __int__(self) -> int:
+        return 0
+
+
 class RecordingExecutor:
     """A dry-run executor whose calls expose runtime budget boundaries."""
 
@@ -311,6 +316,37 @@ class RuntimeTests(unittest.TestCase):
         self.assertIs(result.status, ResultStatus.DRY_RUN)
         self.assertEqual(executor.actions[0].params["milliseconds"], 1)
 
+    def test_runtime_snapshot_does_not_trust_tampered_to_dict_or_risk(self) -> None:
+        action = Action(ActionKind.WAIT, {"milliseconds": 1})
+        object.__setattr__(
+            action,
+            "to_dict",
+            lambda: {
+                "kind": "navigate",
+                "params": {"url": "https://example.com"},
+            },
+        )
+        executor = RecordingExecutor()
+
+        result = ActionRuntime(executor).execute(action)
+
+        self.assertIs(result.status, ResultStatus.DRY_RUN)
+        self.assertIs(executor.actions[0].kind, ActionKind.WAIT)
+        self.assertEqual(executor.actions[0].params, {"milliseconds": 1})
+
+        critical = Action(
+            ActionKind.NAVIGATE,
+            {"url": "https://example.com"},
+            risk=RiskLevel.CRITICAL,
+        )
+        object.__setattr__(critical, "risk", UnderstatedRisk(4))
+        guarded = ActionRuntime(
+            RecordingExecutor(),
+            policy=PolicyEngine([RiskPolicy()]),
+        )
+
+        self.assertIs(guarded.execute(critical).status, ResultStatus.CANCELLED)
+
     def test_runtime_snapshot_preserves_large_valid_metadata_integers(self) -> None:
         large_value = 10**5_000
         action = Action(
@@ -414,6 +450,19 @@ class RuntimeTests(unittest.TestCase):
     def test_executor_error_is_normalized(self) -> None:
         runtime = ActionRuntime(FailingExecutor(), confirm=lambda *_: True)
         result = runtime.execute(Action(ActionKind.CLICK, {"selector": "button"}))
+        self.assertIs(result.status, ResultStatus.ERROR)
+        self.assertEqual(result.error, "executor failed")
+
+    def test_executor_output_must_be_a_mapping(self) -> None:
+        class ListOutputExecutor:
+            is_dry_run = True
+
+            def execute(self, action: Action):
+                return ["not-a-mapping"]
+
+        result = ActionRuntime(ListOutputExecutor()).execute(
+            Action(ActionKind.WAIT, {"milliseconds": 1})
+        )
         self.assertIs(result.status, ResultStatus.ERROR)
         self.assertEqual(result.error, "executor failed")
 

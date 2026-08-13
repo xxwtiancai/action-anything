@@ -214,9 +214,18 @@ unbudgeted.
   `Action` instances and rebuilds an immutable, canonical snapshot before
   hooks run. Normalize application or provider input with `Action(...)` or
   `Action.from_dict(...)` rather than passing duck-typed objects or subclasses.
+  The schema stores built-in JSON scalar values rather than behavior-bearing
+  Python scalar subclasses, and bounds/cycle-checks `Action.metadata`.
+  Actions admitted through `Action(...)`/`Action.from_dict(...)` and then
+  processed by `PolicyEngine` or the base runtime therefore retain one
+  normalized representation. Callers that bypass those boundaries own
+  re-admission themselves.
   An integration that directly overrides `execute()` owns and must enforce its
   own admission and confirmation boundary; budgeted batches reject execution
   hook overrides rather than silently bypassing them.
+- Schema diagnostics for untrusted action plans use short structural messages
+  instead of echoing submitted field names or values. This does not sanitize
+  exceptions raised by application code or custom executors.
 - Default CLI traces retain only a narrow structural/numeric subset; action IDs,
   strings, metadata, policy text, errors, and artifact paths are redacted.
   `--unsafe-trace` is only for local, non-sensitive test data.

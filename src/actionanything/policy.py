@@ -455,7 +455,13 @@ class PolicyEngine:
                 # use object internals to mutate it. Rehydrate a distinct
                 # canonical value for every policy so one extension cannot
                 # downgrade the input that another safety policy evaluates.
-                policy_action = Action.from_dict(action.to_dict())
+                policy_action = Action(
+                    id=action.id,
+                    kind=action.kind,
+                    params=action.params,
+                    risk=action.risk,
+                    metadata=action.metadata,
+                )
                 outcome = policy.evaluate(policy_action)
             except Exception:
                 outcomes.append(

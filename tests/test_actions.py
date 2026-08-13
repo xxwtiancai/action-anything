@@ -1,7 +1,61 @@
 import unittest
+import traceback
 
-from actionanything import Action, ActionKind, ActionResult, RiskLevel
+from actionanything import Action, ActionKind, ActionResult, ResultStatus, RiskLevel
 from actionanything.actions import ActionValidationError, MAX_METADATA_NESTING
+
+
+class DivergentText(str):
+    def __str__(self) -> str:
+        return "https://example.com/"
+
+
+class OversizedText(str):
+    def __len__(self) -> int:
+        return 0
+
+
+class UnderstatedInteger(int):
+    def __int__(self) -> int:
+        return 0
+
+
+class DivergentFloat(float):
+    def __float__(self) -> float:
+        return float("nan")
+
+
+class MaskedNanFloat(float):
+    def __float__(self) -> float:
+        return 1.0
+
+
+class DistinctAlias(str):
+    def __hash__(self) -> int:
+        return id(self)
+
+    def __eq__(self, other: object) -> bool:
+        return self is other
+
+
+class ReprBomb(str):
+    def __repr__(self) -> str:
+        return "untrusted-repr-diagnostic-" + ("x" * 4_096)
+
+
+class IntegerReprBomb(int):
+    def __repr__(self) -> str:
+        return "untrusted-repr-diagnostic-" + ("x" * 4_096)
+
+
+class DivergentDict(dict):
+    def items(self):
+        return (("selector", "#replaced"),)
+
+
+class DivergentList(list):
+    def __iter__(self):
+        return iter(("replaced",))
 
 
 class ActionTests(unittest.TestCase):
@@ -105,54 +159,213 @@ class ActionTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             action.metadata["nested"]["origin"] = "tampered"  # type: ignore[index]
 
-    def test_metadata_normalization_has_a_stable_nesting_boundary(self) -> None:
-        metadata: dict[str, object] = {}
-        cursor = metadata
-        for _ in range(MAX_METADATA_NESTING - 1):
-            child: dict[str, object] = {}
-            cursor["child"] = child
-            cursor = child
+    def test_schema_normalizes_scalar_subclasses_to_builtin_values(self) -> None:
+        action = Action(
+            ActionKind.TYPE,
+            {"text": DivergentText("safe"), "selector": DivergentText("#safe")},
+            id=DivergentText("action-1"),
+            metadata={DivergentText("source"): DivergentText("provider")},
+        )
+        result = ActionResult(
+            DivergentText("action-1"),
+            ResultStatus.DRY_RUN,
+            output={"message": DivergentText("safe")},
+            error=DivergentText(""),
+            audit_error=DivergentText("audit"),
+        )
 
-        Action(ActionKind.CLICK, {"selector": "#submit"}, metadata=metadata)
-        cursor["child"] = {}
-        payload = {"kind": "click", "params": {"selector": "#submit"}, "metadata": metadata}
+        self.assertIs(type(action.id), str)
+        self.assertIs(type(action.params["text"]), str)
+        self.assertEqual(action.params["text"], "safe")
+        self.assertIs(type(action.params["selector"]), str)
+        self.assertEqual(action.params["selector"], "#safe")
+        self.assertEqual(action.metadata, {"source": "provider"})
+        self.assertIs(type(action.metadata["source"]), str)
+        self.assertIs(type(result.action_id), str)
+        self.assertIs(type(result.output["message"]), str)
+        self.assertIs(type(result.error), str)
+        self.assertIs(type(result.audit_error), str)
+        self.assertTrue(all(type(value) is str for value in action.to_dict()["params"].values()))
 
-        for build in (
-            lambda: Action(ActionKind.CLICK, {"selector": "#submit"}, metadata=metadata),
-            lambda: Action.from_dict(payload),
-        ):
-            with self.subTest(build=build):
-                with self.assertRaisesRegex(ActionValidationError, "nested containers"):
-                    build()
+    def test_schema_uses_base_scalar_values_for_validation_and_storage(self) -> None:
+        with self.assertRaisesRegex(ActionValidationError, "at most"):
+            Action(ActionKind.CLICK, {"selector": OversizedText("x" * 4_097)})
+        with self.assertRaisesRegex(ActionValidationError, "between"):
+            Action(ActionKind.WAIT, {"milliseconds": UnderstatedInteger(60_001)})
+        with self.assertRaisesRegex(ActionValidationError, "finite"):
+            Action(ActionKind.CLICK, {"x": MaskedNanFloat(float("nan")), "y": 0})
 
-    def test_metadata_normalization_rejects_circular_references(self) -> None:
-        metadata: dict[str, object] = {}
-        metadata["self"] = metadata
-        payload = {"kind": "click", "params": {"selector": "#submit"}, "metadata": metadata}
+        action = Action(
+            ActionKind.WAIT,
+            {"milliseconds": UnderstatedInteger(1)},
+            metadata={"count": UnderstatedInteger(4), "ratio": DivergentFloat(1.0)},
+        )
+        self.assertIs(type(action.params["milliseconds"]), int)
+        self.assertEqual(action.params["milliseconds"], 1)
+        self.assertIs(type(action.metadata["count"]), int)
+        self.assertEqual(action.metadata["count"], 4)
+        self.assertIs(type(action.metadata["ratio"]), float)
+        self.assertEqual(action.metadata["ratio"], 1.0)
 
-        for build in (
-            lambda: Action(ActionKind.CLICK, {"selector": "#submit"}, metadata=metadata),
-            lambda: Action.from_dict(payload),
-        ):
-            with self.subTest(build=build):
-                with self.assertRaisesRegex(ActionValidationError, "circular references"):
-                    build()
+    def test_schema_rejects_mapping_key_aliases_after_normalization(self) -> None:
+        first = DistinctAlias("source")
+        second = DistinctAlias("source")
+        with self.assertRaisesRegex(ActionValidationError, "unique strings"):
+            Action(
+                ActionKind.CLICK,
+                {"selector": "#safe"},
+                metadata={first: "one", second: "two"},
+            )
 
-    def test_metadata_cycle_detection_allows_shared_children(self) -> None:
-        shared = {"source": "provider"}
+    def test_schema_uses_base_container_operations_before_freezing(self) -> None:
         action = Action(
             ActionKind.CLICK,
-            {"selector": "#submit"},
-            metadata={"left": shared, "right": shared},
+            DivergentDict({"selector": "#safe"}),
+            metadata={"items": DivergentList(["original"])},
         )
-        self.assertEqual(action.metadata["left"], {"source": "provider"})
-        self.assertEqual(action.metadata["right"], {"source": "provider"})
+        result = ActionResult(
+            "result-1",
+            ResultStatus.DRY_RUN,
+            output=DivergentDict({"message": "original"}),
+        )
 
-        metadata: dict[str, object] = {}
-        child: list[object] = [metadata]
-        metadata["child"] = child
-        with self.assertRaisesRegex(ActionValidationError, "circular references"):
-            Action(ActionKind.CLICK, {"selector": "#submit"}, metadata=metadata)
+        self.assertEqual(action.params, {"selector": "#safe"})
+        self.assertEqual(action.metadata["items"], ("original",))
+        self.assertEqual(result.output, {"message": "original"})
+
+    def test_metadata_rejects_cycles_and_preserves_shared_children(self) -> None:
+        direct_cycle: dict[str, object] = {}
+        direct_cycle["self"] = direct_cycle
+        indirect_cycle: dict[str, object] = {}
+        child_list: list[object] = [indirect_cycle]
+        indirect_cycle["children"] = child_list
+
+        for build in (
+            lambda: Action(
+                ActionKind.WAIT,
+                {"milliseconds": 1},
+                metadata=direct_cycle,
+            ),
+            lambda: Action.from_dict(
+                {
+                    "kind": "wait",
+                    "params": {"milliseconds": 1},
+                    "metadata": indirect_cycle,
+                }
+            ),
+        ):
+            with self.subTest(build=build):
+                with self.assertRaisesRegex(
+                    ActionValidationError, "circular references"
+                ):
+                    build()
+
+        shared = {"source": "provider"}
+        action = Action(
+            ActionKind.WAIT,
+            {"milliseconds": 1},
+            metadata={"first": shared, "second": shared},
+        )
+        self.assertEqual(action.metadata["first"], {"source": "provider"})
+        self.assertEqual(action.metadata["second"], {"source": "provider"})
+
+    def test_metadata_has_a_stable_container_nesting_limit(self) -> None:
+        accepted: object = "leaf"
+        for _ in range(MAX_METADATA_NESTING):
+            accepted = {"child": accepted}
+        for build in (
+            lambda: Action(
+                ActionKind.WAIT, {"milliseconds": 1}, metadata=accepted
+            ),
+            lambda: Action.from_dict(
+                {
+                    "kind": "wait",
+                    "params": {"milliseconds": 1},
+                    "metadata": accepted,
+                }
+            ),
+        ):
+            with self.subTest(build=build):
+                build()
+
+        rejected: object = "leaf"
+        for _ in range(MAX_METADATA_NESTING + 1):
+            rejected = {"child": rejected}
+        for build in (
+            lambda: Action(
+                ActionKind.WAIT, {"milliseconds": 1}, metadata=rejected
+            ),
+            lambda: Action.from_dict(
+                {
+                    "kind": "wait",
+                    "params": {"milliseconds": 1},
+                    "metadata": rejected,
+                }
+            ),
+        ):
+            with self.subTest(build=build):
+                with self.assertRaisesRegex(ActionValidationError, "must not exceed"):
+                    build()
+
+    def test_schema_errors_do_not_reflect_untrusted_values_or_nested_keys(self) -> None:
+        sentinel = "untrusted-schema-diagnostic-" + ("x" * 4_096)
+        invalid_inputs = (
+            lambda: Action.from_dict(
+                {"kind": "click", "params": {"selector": "#x"}, sentinel: True}
+            ),
+            lambda: Action(ActionKind.CLICK, {"selector": "#x", sentinel: True}),
+            lambda: Action.from_dict({"kind": sentinel, "params": {}}),
+            lambda: Action.from_dict(
+                {
+                    "kind": "wait",
+                    "params": {"milliseconds": 1},
+                    "risk": sentinel,
+                }
+            ),
+            lambda: Action.from_dict(
+                {
+                    "kind": "wait",
+                    "params": {"milliseconds": 1},
+                    "risk": 10**2_000,
+                }
+            ),
+            lambda: Action(
+                ActionKind.CLICK,
+                {"selector": "#x"},
+                metadata={sentinel: object()},
+            ),
+            lambda: ActionResult("result-1", sentinel),
+            lambda: ActionResult(
+                "result-1", ResultStatus.DRY_RUN, output={sentinel: object()}
+            ),
+            lambda: Action(ReprBomb("unsupported-kind"), {}),
+            lambda: Action(
+                ActionKind.WAIT,
+                {"milliseconds": 1},
+                risk=IntegerReprBomb(99),
+            ),
+        )
+
+        for build in invalid_inputs:
+            with self.subTest(build=build):
+                with self.assertRaises((ActionValidationError, ValueError)) as context:
+                    build()
+                message = str(context.exception)
+                self.assertNotIn(sentinel, message)
+                self.assertNotIn("untrusted-repr-diagnostic-", message)
+                self.assertLessEqual(len(message), 128)
+
+    def test_schema_preserves_root_mapping_contracts_and_safe_url_error_chains(self) -> None:
+        with self.assertRaisesRegex(ActionValidationError, "action metadata must be a mapping"):
+            Action(ActionKind.WAIT, {"milliseconds": 1}, metadata=["not-a-mapping"])
+        with self.assertRaisesRegex(TypeError, "result output must be a mapping"):
+            ActionResult("result-1", ResultStatus.DRY_RUN, output=["not-a-mapping"])
+
+        sentinel = "untrusted-port-diagnostic-" + ("x" * 4_096)
+        with self.assertRaises(ActionValidationError) as context:
+            Action(ActionKind.NAVIGATE, {"url": f"https://example.com:{sentinel}/"})
+        rendered = "".join(traceback.format_exception(context.exception))
+        self.assertNotIn(sentinel, rendered)
 
     def test_payload_fields_are_strict(self) -> None:
         with self.assertRaisesRegex(ActionValidationError, "unsupported field"):

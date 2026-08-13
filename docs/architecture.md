@@ -44,14 +44,20 @@ business operation; applications still need their own policy and human review
 for consequential work.
 
 At the base, unoverridden runtime boundary, only an exact `Action` instance is
-accepted, then its public representation is rebuilt into an immutable
-canonical snapshot. This preserves the parameters and trusted minimum-risk
-floor enforced by `Action(...)` or `Action.from_dict(...)`, including if a
-caller has tampered with a frozen instance through Python object internals.
-Integrations must normalize their own values before calling `execute()` or
-`execute_many()`. A direct `execute()` override is application-owned and must
-enforce its own admission and confirmation boundary; budgeted batches instead
-reject execution-hook overrides before consuming input. When policy returns
+accepted, then its current fields are rebuilt into an immutable canonical
+snapshot. This re-applies the parameters and trusted minimum-risk floor
+enforced by `Action(...)` or `Action.from_dict(...)`, while deliberately
+ignoring a replaced `to_dict()` method. It does not prove that arbitrary
+in-process code preserved the original object's integrity. The action schema
+stores built-in JSON scalar values and deeply frozen containers rather than
+caller-provided Python subclasses, so a scalar cannot change its value through
+a custom `__str__`, `__int__`, or `__float__` method after validation.
+`Action.metadata` is also bounded and cycle-checked at intake. `PolicyEngine`
+and the base runtime re-enter that schema before their hooks observe an action;
+callers that bypass those boundaries must normalize their own values. A direct
+`execute()` override is application-owned and must enforce its own admission
+and confirmation boundary; budgeted batches instead reject execution-hook
+overrides before consuming input. When policy returns
 `confirm`, a confirmation handler must return the literal built-in `True`.
 Missing handlers, exceptions, `1`, strings, and arbitrary truthy objects are
 all cancellation, not consent.
