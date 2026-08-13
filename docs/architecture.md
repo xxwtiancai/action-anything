@@ -96,6 +96,17 @@ session state in the embedding application rather than the adapter. Store only
 useful, non-sensitive provenance under `Action.metadata`; reject unsupported
 provider fields instead of silently approximating them.
 
+The built-in `AnthropicComputerUseAdapter` illustrates the boundary: the
+embedding application pins `computer_20250124` or `computer_20251124` plus the
+display dimensions used in its request, then passes one direct `tool_use`
+block to the adapter. A returned block does not establish which computer-tool
+definition or screenshot coordinate space produced it. The adapter supports
+only coordinate clicks, focused typing, bounded waits, and screenshots; it
+rejects provider scroll, key, drag, multi-click, zoom, and programmatic-caller
+semantics instead of inventing a translation. It still does not make a model
+call, send a screenshot, acknowledge a provider safeguard, or approve local
+execution.
+
 ### Add an executor
 
 Implement `Executor.execute(action)` and expose `is_dry_run`. Executors should
@@ -110,8 +121,8 @@ confirmation precedence over allow.
 
 ## Near-term roadmap
 
-- Additional adapters for documented computer-use model outputs.
-- JSON Schema export for policy outcomes.
+- Additional adapters and independently reviewed provider action mappings.
+- JSON Schema export for actions and policy outcomes.
 - Screenshot evidence associated with each trace step.
 - Sandboxed remote executors and explicit resource limits.
 - BrowserGym/WebArena-compatible evaluation runners.
