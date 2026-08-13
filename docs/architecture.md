@@ -62,6 +62,15 @@ overrides before consuming input. When policy returns
 Missing handlers, exceptions, `1`, strings, and arbitrary truthy objects are
 all cancellation, not consent.
 
+Canonically constructed executor results use the same immutable JSON
+normalization. The root `ActionResult.output` mapping may contain at most 64
+mapping/list/tuple containers along any nested path (including the root) and
+may not contain a circular reference. This is a structural recursion boundary,
+not a limit on total bytes, width, key count, string length, custom executor
+side effects, or trace-file input. The base runtime creates this canonical
+result before recording; direct `TraceRecorder` integrations own their own
+result admission.
+
 ### Dry-run first
 
 The CLI uses `DryRunExecutor` unless a user explicitly passes `--execute`.

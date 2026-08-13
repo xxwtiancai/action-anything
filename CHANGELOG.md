@@ -27,6 +27,8 @@ uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions and
   and cumulative-wait limits.
 - A bounded, cycle-checked `Action.metadata` intake boundary and short,
   non-reflective diagnostics for malformed action-plan fields and values.
+- A bounded, cycle-checked `ActionResult.output` normalization boundary for
+  executor results.
 
 ### Changed
 
@@ -39,9 +41,10 @@ uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions and
 - Trace inspection and replay now reject excessively nested or malformed trace
   events with stable input errors rather than allowing recursive scans or
   event-shape assumptions to fail unexpectedly.
-- Action metadata now has a 64-container nesting limit and rejects circular
-  Python container references with a stable validation error. This bounds
-  recursive normalization; it is not a general JSON size or key-count quota.
+- Action metadata now permits at most 64 mapping/list/tuple containers along
+  any nested path, including the root, and rejects circular Python container
+  references with a stable validation error. This bounds recursive
+  normalization; it is not a general JSON size, width, or key-count quota.
 - The standard policy now requires an explicit domain allowlist for all
   navigation, including dry-run, and confirms `click`/`type` at the reversible
   risk floor.
@@ -63,7 +66,12 @@ uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions and
   `__int__`, or `__float__` behavior cannot change a policy or executor view
   after intake.
 - `Action.metadata` accepts at most 64 nested mapping/list/tuple containers
-  and rejects circular references before an action reaches policy or execution.
+  along any path, including the root, and rejects circular references before
+  an action reaches policy or execution.
+- Canonically constructed `ActionResult.output` now permits at most 64
+  mapping/list/tuple containers along any nested path, including the root, and
+  rejects circular references. The base runtime applies this before recording
+  executor results.
 
 ### Breaking changes
 

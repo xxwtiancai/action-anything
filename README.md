@@ -92,10 +92,11 @@ allowlisting, or executor containment. In particular, a model-provided
 Some runtime rules are intentionally stricter than portable JSON Schema. For
 example, Python validation distinguishes an integer JSON token from `1.0` for
 bounded integer fields, performs full URL and artifact-path parsing, and
-limits action metadata to 64 mapping/list/tuple containers with no circular
-references. This is a runtime recursion boundary, not a general plan-size or
-key-count quota. Send all accepted output through `Action.from_dict()` or
-`Action(...)` before it is evaluated or executed.
+limits action metadata to 64 mapping/list/tuple containers along any nested
+path (including the root), with no circular references. This is a runtime
+recursion boundary, not a general plan-size, width, or key-count quota. Send
+all accepted output through `Action.from_dict()` or `Action(...)` before it is
+evaluated or executed.
 
 ## Provider adapters
 
@@ -226,6 +227,11 @@ unbudgeted.
 - Schema diagnostics for untrusted action plans use short structural messages
   instead of echoing submitted field names or values. This does not sanitize
   exceptions raised by application code or custom executors.
+- Canonically constructed `ActionResult.output` is deeply frozen and has the
+  same 64-container-per-nested-path, cycle-rejecting boundary as action
+  metadata. If a custom executor returns an invalid result shape, the base
+  runtime reports a generic executor failure rather than exposing recursive
+  output through traces.
 - Default CLI traces retain only a narrow structural/numeric subset; action IDs,
   strings, metadata, policy text, errors, and artifact paths are redacted.
   `--unsafe-trace` is only for local, non-sensitive test data.
