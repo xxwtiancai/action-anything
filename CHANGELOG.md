@@ -21,6 +21,8 @@ uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions and
 - Self-contained, versioned Draft 2020-12 schemas for action and action-plan
   inputs, available through `action_schema()`, `action_plan_schema()`, and
   `aa schema action|plan`.
+- Optional exact `SelectorAllowlistPolicy` for least-privilege `click` and
+  `type` target admission, while retaining confirmation on selector matches.
 
 ### Changed
 

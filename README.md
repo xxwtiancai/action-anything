@@ -14,7 +14,7 @@ profiles, and deployment isolation.
 - A model-agnostic schema for navigation, click, type, scroll, wait, and screenshot actions.
 - Strict OpenAI Responses and Anthropic Computer Use adapters that normalize a
   documented action subset without making model calls.
-- A composable policy engine with risk gates, domain allowlists, and sensitive-target checks.
+- A composable policy engine with risk gates, domain and exact-selector allowlists, and sensitive-target checks.
 - Human confirmation for actions that the configured policy gates.
 - A zero-dependency dry-run executor and an optional Playwright browser executor.
 - Redacted JSONL traces plus trace inspection and replay for local test data.
@@ -130,6 +130,28 @@ gestures, zoom, programmatic callers, and unknown fields rather than guessing
 their semantics. The adapter does not treat provider-side safeguards as local
 approval; use `PolicyEngine` and an application-owned confirmation flow before
 execution.
+
+### Exact selector allowlists
+
+For a fixed page workflow, add an opt-in exact selector boundary for `click`
+and `type` actions. It compares trusted original locator text byte-for-byte
+and still requires confirmation on a match; it does not parse or normalize CSS
+or other executor locator syntaxes, and it is not a claim that the matched
+element is business-safe.
+
+```python
+policy = PolicyEngine.standard(
+    ["example.com"],
+    allowed_selectors={"#search", "input[name=query]"},
+)
+```
+
+When installed, it denies coordinate clicks and focused-input typing because
+they have no selector to compare. That intentionally means coordinate-click
+and focused-type provider outputs need a different, explicitly reviewed policy
+configuration. It does not prove selector uniqueness, page state, DOM
+stability, click effects, or cross-domain safety; retain confirmation and the
+executor domain boundary.
 
 ## Safety defaults
 

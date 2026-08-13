@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import ipaddress
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 from typing import Iterable, Protocol
 from urllib.parse import urlsplit
 
-from .actions import Action, ActionKind, RiskLevel
+from .actions import Action, ActionKind, MAX_SELECTOR_LENGTH, RiskLevel
 
 
 _DECIMAL_IPV4_PART = re.compile(r"^[0-9]+$")
@@ -346,6 +347,75 @@ class SensitiveTargetPolicy:
         return None
 
 
+def normalize_allowed_selectors(selectors: Iterable[str]) -> frozenset[str]:
+    """Validate a trusted exact selector allowlist without normalization.
+
+    CSS and other locator syntaxes have context-dependent semantics. This is a
+    byte-for-byte target-admission boundary, not a CSS parser, pattern matcher,
+    or semantic safety classifier.
+    """
+
+    if isinstance(selectors, (str, bytes, Mapping)):
+        raise ValueError("allowed selectors must be an iterable of selector strings")
+    try:
+        iterator = iter(selectors)
+    except TypeError as exc:
+        raise ValueError("allowed selectors must be an iterable of selector strings") from exc
+
+    normalized: set[str] = set()
+    for selector in iterator:
+        if not isinstance(selector, str):
+            raise ValueError("allowed selectors must be strings")
+        if not selector or not selector.strip():
+            raise ValueError("allowed selectors must be non-empty strings")
+        if selector != selector.strip():
+            raise ValueError("allowed selectors must not have leading or trailing whitespace")
+        if any(ord(character) < 32 or ord(character) == 127 for character in selector):
+            raise ValueError("allowed selectors must not contain control characters")
+        if len(selector) > MAX_SELECTOR_LENGTH:
+            raise ValueError(
+                f"allowed selectors must be at most {MAX_SELECTOR_LENGTH} characters"
+            )
+        normalized.add(selector)
+    return frozenset(normalized)
+
+
+@dataclass(frozen=True, init=False)
+class SelectorAllowlistPolicy:
+    """Require exact trusted selectors for click and type proposals.
+
+    A configured selector list is an opt-in least-privilege boundary. It
+    denies coordinate clicks and focused-input typing because neither has a
+    target string to compare. A match still returns ``confirm``: a matching
+    locator does not prove element identity, page state, or business safety.
+    """
+
+    allowed_selectors: frozenset[str]
+
+    def __init__(self, allowed_selectors: Iterable[str]) -> None:
+        object.__setattr__(
+            self,
+            "allowed_selectors",
+            normalize_allowed_selectors(allowed_selectors),
+        )
+
+    def evaluate(self, action: Action) -> PolicyOutcome | None:
+        if action.kind not in {ActionKind.CLICK, ActionKind.TYPE}:
+            return None
+        selector = action.params.get("selector")
+        if not isinstance(selector, str) or selector not in self.allowed_selectors:
+            return PolicyOutcome(
+                Decision.DENY,
+                "click or type target is outside the configured selector allowlist",
+                type(self).__name__,
+            )
+        return PolicyOutcome(
+            Decision.CONFIRM,
+            "selector allowlist matched; human confirmation is still required",
+            type(self).__name__,
+        )
+
+
 class PolicyEngine:
     """Combine policies using deny-over-confirm-over-allow precedence.
 
@@ -358,16 +428,19 @@ class PolicyEngine:
 
     @classmethod
     def standard(
-        cls, allowed_domains: Iterable[str] | None = None
+        cls,
+        allowed_domains: Iterable[str] | None = None,
+        *,
+        allowed_selectors: Iterable[str] | None = None,
     ) -> "PolicyEngine":
-        return cls(
-            [
-                SafeNavigationPolicy(),
-                DomainAllowlistPolicy(allowed_domains or ()),
-                RiskPolicy(),
-                SensitiveTargetPolicy(),
-            ]
-        )
+        policies: list[Policy] = [
+            SafeNavigationPolicy(),
+            DomainAllowlistPolicy(allowed_domains or ()),
+        ]
+        if allowed_selectors is not None:
+            policies.append(SelectorAllowlistPolicy(allowed_selectors))
+        policies.extend([RiskPolicy(), SensitiveTargetPolicy()])
+        return cls(policies)
 
     def evaluate(self, action: Action) -> PolicyOutcome:
         outcomes: list[PolicyOutcome] = []

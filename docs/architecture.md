@@ -119,6 +119,13 @@ Implement `Policy.evaluate(action)`. Return `None` when the policy does not
 apply. `PolicyEngine` gives deny decisions precedence over confirmation, and
 confirmation precedence over allow.
 
+`SelectorAllowlistPolicy` is an opt-in example of target-scoped least
+privilege. It only handles `click` and `type`, compares a trusted locator
+configuration byte-for-byte, denies coordinate/focused targets that have no
+selector, and returns `confirm` even on a match. It is not a CSS parser, glob,
+regular-expression matcher, page-state verifier, or replacement for the
+browser executor's domain containment.
+
 ## Near-term roadmap
 
 - Additional adapters and independently reviewed provider action mappings.
