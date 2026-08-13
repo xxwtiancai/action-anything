@@ -17,6 +17,11 @@ from .policy import PolicyOutcome
 
 
 REDACTED = "[REDACTED]"
+# This permits an Action metadata boundary of 64 containers plus the trace
+# envelope while still rejecting payloads that can make trace inspection or
+# replay recursively expensive. The writer and reader use the same check so
+# an unsafe trace cannot be written successfully and then rejected on read.
+MAX_TRACE_NESTING = 128
 SENSITIVE_KEYS = frozenset(
     {
         "authorization",
@@ -126,14 +131,43 @@ def redact_value(value: Any, key: str | None = None) -> Any:
 
 
 def contains_redaction(value: Any) -> bool:
-    """Return whether a recursively nested trace payload contains a redaction."""
+    """Return whether an arbitrarily nested trace payload contains a redaction."""
 
-    if value == REDACTED:
-        return True
-    if isinstance(value, Mapping):
-        return any(contains_redaction(item) for item in value.values())
-    if isinstance(value, (list, tuple)):
-        return any(contains_redaction(item) for item in value)
+    pending = [value]
+    visited_containers: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if isinstance(current, str) and current == REDACTED:
+            return True
+        if isinstance(current, Mapping):
+            identity = id(current)
+            if identity in visited_containers:
+                continue
+            visited_containers.add(identity)
+            pending.extend(current.values())
+        elif isinstance(current, (list, tuple)):
+            identity = id(current)
+            if identity in visited_containers:
+                continue
+            visited_containers.add(identity)
+            pending.extend(current)
+    return False
+
+
+def _trace_is_nested_too_deep(value: Any) -> bool:
+    """Return whether a decoded trace event exceeds its structural depth cap."""
+
+    pending: list[tuple[Any, int]] = [(value, 0)]
+    while pending:
+        current, nesting = pending.pop()
+        if not isinstance(current, (Mapping, list, tuple)):
+            continue
+        if nesting >= MAX_TRACE_NESTING:
+            return True
+        if isinstance(current, Mapping):
+            pending.extend((item, nesting + 1) for item in current.values())
+        else:
+            pending.extend((item, nesting + 1) for item in current)
     return False
 
 
@@ -431,6 +465,8 @@ class TraceRecorder:
         result: ActionResult,
     ) -> None:
         event = self._event(action, outcome, result)
+        if _trace_is_nested_too_deep(event):
+            raise ValueError("trace event is nested too deeply")
         path = self._safe_trace_path()
         encoded = (json.dumps(event, ensure_ascii=False, default=str) + "\n").encode("utf-8")
         flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
@@ -478,9 +514,16 @@ def read_trace(path: str | Path) -> Iterator[dict[str, Any]]:
         for line_number, line in enumerate(stream, start=1):
             if not line.strip():
                 continue
-            value = json.loads(line)
+            try:
+                value = json.loads(line)
+            except RecursionError as exc:
+                raise ValueError(f"trace event on line {line_number} is nested too deeply") from exc
             if not isinstance(value, dict) or "action" not in value:
                 raise ValueError(f"invalid trace event on line {line_number}")
+            if _trace_is_nested_too_deep(value):
+                raise ValueError(f"trace event on line {line_number} is nested too deeply")
             if not isinstance(value["action"], dict):
                 raise ValueError(f"invalid action in trace event on line {line_number}")
+            if "result" in value and not isinstance(value["result"], dict):
+                raise ValueError(f"invalid result in trace event on line {line_number}")
             yield value

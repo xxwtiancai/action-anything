@@ -32,7 +32,9 @@ uses [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions and
 - Domain allowlists and standard navigation now reject Unicode hostnames.
   Internationalized domains must be configured as explicit ASCII Punycode
   A-labels so policy comparison is not widened by a legacy IDNA conversion.
-
+- Trace inspection and replay now reject excessively nested or malformed trace
+  events with stable input errors rather than allowing recursive scans or
+  event-shape assumptions to fail unexpectedly.
 - The standard policy now requires an explicit domain allowlist for all
   navigation, including dry-run, and confirms `click`/`type` at the reversible
   risk floor.

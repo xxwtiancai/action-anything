@@ -150,6 +150,52 @@ class CliTests(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertIn("multiple runs", errors)
 
+    def test_replay_accepts_a_shallow_unsafe_trace(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            trace = Path(directory) / "trace.jsonl"
+            action = Action(ActionKind.WAIT, {"milliseconds": 1})
+            TraceRecorder(trace, redact=False).record(
+                action,
+                PolicyOutcome(Decision.ALLOW, "test", "test"),
+                __import__("actionanything").ActionResult(
+                    action.id,
+                    __import__("actionanything").ResultStatus.DRY_RUN,
+                ),
+            )
+
+            code, output, errors = self._main(["replay", str(trace)])
+
+            self.assertEqual(code, 0)
+            self.assertIn("dry_run", output)
+            self.assertEqual(errors, "")
+
+    def test_trace_commands_reject_deep_or_invalid_trace_input(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            deeply_nested = root / "deep.jsonl"
+            deeply_nested.write_text(
+                '{"action":' + '{"child":' * 2_000 + "null" + "}" * 2_000 + "}\n",
+                encoding="utf-8",
+            )
+
+            inspect_code, _, inspect_errors = self._main(["inspect", str(deeply_nested)])
+            replay_code, _, replay_errors = self._main(["replay", str(deeply_nested)])
+
+            self.assertEqual(inspect_code, 2)
+            self.assertEqual(replay_code, 2)
+            self.assertIn("nested too deeply", inspect_errors)
+            self.assertIn("nested too deeply", replay_errors)
+            self.assertNotIn("RecursionError", inspect_errors)
+            self.assertNotIn("RecursionError", replay_errors)
+
+            invalid_result = root / "invalid-result.jsonl"
+            invalid_result.write_text(
+                '{"action": {}, "result": []}\n', encoding="utf-8"
+            )
+            code, _, errors = self._main(["inspect", str(invalid_result)])
+            self.assertEqual(code, 2)
+            self.assertIn("invalid result", errors)
+
 
 if __name__ == "__main__":
     unittest.main()
